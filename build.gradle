@@ -60,6 +60,9 @@ sourceSets {
 		java.srcDirs = ['src/main/java', 'src/main/legacyJava']
 	}
 	java17
+	buildTools {
+		java.srcDirs = ['src/build/java']
+	}
 }
 
 configurations {
@@ -117,6 +120,8 @@ dependencies {
 	include "net.fabricmc:mapping-io:0.7.1"
 
 	development "io.github.llamalad7:mixinextras-fabric:$mixin_extras_version"
+	buildToolsImplementation "org.ow2.asm:asm:${project.asm_version}"
+	buildToolsImplementation "org.ow2.asm:asm-tree:${project.asm_version}"
 
 	testCompileOnly 'org.jetbrains:annotations:23.0.0'
 
@@ -182,7 +187,12 @@ tasks.register('getSat4jAbout', Copy) {
 tasks.register('fatJar', ShadowJar) {
 	dependsOn getSat4jAbout
 	from sourceSets.main.output
-	from project(":minecraft").sourceSets.main.output
+	from(project(":minecraft").sourceSets.main.output) {
+		exclude 'META-INF/services/net.fabricmc.loader.impl.game.GameProvider'
+	}
+	from(project(":spiralknights").sourceSets.main.output) {
+		exclude 'META-INF/services/net.fabricmc.loader.impl.game.GameProvider'
+	}
 	from getSat4jAbout.destinationDir
 
 	inputs.property "archivesName", project.base.archivesName.get()
@@ -200,7 +210,8 @@ tasks.register('fatJar', ShadowJar) {
 	}
 
 	archiveClassifier = "fat"
-	configurations = [project.configurations.include]
+	configurations = [project.configurations.include, project.configurations.installer]
+	mergeServiceFiles()
 
 	relocate 'org.sat4j', 'net.fabricmc.loader.impl.lib.sat4j'
 	relocate 'net.fabricmc.classtweaker', 'net.fabricmc.loader.impl.lib.classtweaker'
@@ -213,13 +224,16 @@ tasks.register('fatJar', ShadowJar) {
 	exclude 'META-INF/*.RSA'
 	exclude 'META-INF/*.SF'
 
-	inputs.files(project.configurations.development)
-	def devFiles = project.configurations.development.files
+	outputs.upToDateWhen { false }
+}
 
-	doLast {
-		JarNester.nestJars(devFiles, archiveFile.get().asFile, LoggerFactory.getLogger("JiJ"))
-	}
+tasks.register('patchFatJarMixinGson', JavaExec) {
+	dependsOn fatJar, compileBuildToolsJava
+	mainClass = 'net.fabricmc.loader.build.PatchMixinGson'
+	classpath = sourceSets.buildTools.runtimeClasspath
+	args fatJar.archiveFile.get().asFile.absolutePath
 
+	inputs.file fatJar.archiveFile
 	outputs.upToDateWhen { false }
 }
 
@@ -228,14 +242,15 @@ File proguardTmpFile = file("build/tmp/fabric-loader-${version}.jar")
 import proguard.gradle.ProGuardTask
 
 tasks.register('proguardJar', ProGuardTask) {
-	dependsOn fatJar
-	def classpath = project(":minecraft").configurations.compileClasspath
+	dependsOn patchFatJarMixinGson
+	def bundledClasspath = project.configurations.include + project.configurations.installer + project.configurations.development
+	def classpath = (project(":minecraft").configurations.compileClasspath + project(":spiralknights").configurations.compileClasspath) - bundledClasspath
 
 	inputs.files(fatJar, classpath)
 	outputs.files(proguardTmpFile)
 
 	doFirst {
-		classpath.resolve().forEach {
+		classpath.files.forEach {
 			libraryjars it
 		}
 	}
@@ -270,8 +285,10 @@ tasks.withType(AbstractArchiveTask) {
 }
 
 sourcesJar {
+	duplicatesStrategy = DuplicatesStrategy.EXCLUDE
 	from sourceSets.main.allSource
 	from project(":minecraft").sourceSets.main.allSource
+	from project(":spiralknights").sourceSets.main.allSource
 }
 
 // useful for creating test mod jar

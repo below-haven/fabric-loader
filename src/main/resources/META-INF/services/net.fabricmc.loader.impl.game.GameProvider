@@ -1,0 +1,2 @@
+net.fabricmc.loader.impl.game.minecraft.MinecraftGameProvider
+net.fabricmc.loader.impl.game.spiralknights.SpiralKnightsGameProvider

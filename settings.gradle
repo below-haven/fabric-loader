@@ -19,5 +19,6 @@ if (!JavaVersion.current().isCompatibleWith(JavaVersion.VERSION_21)) {
 }
 
 include "minecraft"
+include "spiralknights"
 include "junit"
 include "minecraft:minecraft-test"

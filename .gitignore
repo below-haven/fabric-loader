@@ -22,7 +22,12 @@
 !/proguard.conf
 
 !/minecraft
+!/spiralknights
 !/junit
+
+/spiralknights/build/
+/spiralknights/bin/
+/spiralknights/fabricloader.log
 
 # MacOS junk files
 .DS_Store
