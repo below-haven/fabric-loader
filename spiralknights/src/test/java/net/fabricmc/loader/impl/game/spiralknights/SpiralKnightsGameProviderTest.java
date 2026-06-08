@@ -35,6 +35,9 @@ import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.objectweb.asm.ClassWriter;
+import org.objectweb.asm.MethodVisitor;
+import org.objectweb.asm.Opcodes;
 
 import net.fabricmc.api.EnvType;
 import net.fabricmc.loader.impl.FormattedException;
@@ -57,6 +60,8 @@ public class SpiralKnightsGameProviderTest {
 	private String oldBootstrapped;
 	private String oldJavaClassPath;
 	private String oldOsName;
+	private String oldSpiralKnightsLogLevel;
+	private String oldJavaLoggingConfigClass;
 
 	@BeforeEach
 	public void setUp() {
@@ -71,6 +76,8 @@ public class SpiralKnightsGameProviderTest {
 		oldBootstrapped = System.getProperty(SpiralKnightsLauncher.BOOTSTRAPPED_PROPERTY);
 		oldJavaClassPath = System.getProperty("java.class.path");
 		oldOsName = System.getProperty("os.name");
+		oldSpiralKnightsLogLevel = System.getProperty(SystemProperties.SPIRAL_KNIGHTS_LOG_LEVEL);
+		oldJavaLoggingConfigClass = System.getProperty("java.util.logging.config.class");
 	}
 
 	@AfterEach
@@ -86,6 +93,8 @@ public class SpiralKnightsGameProviderTest {
 		restore(SpiralKnightsLauncher.BOOTSTRAPPED_PROPERTY, oldBootstrapped);
 		restore("java.class.path", oldJavaClassPath);
 		restore("os.name", oldOsName);
+		restore(SystemProperties.SPIRAL_KNIGHTS_LOG_LEVEL, oldSpiralKnightsLogLevel);
+		restore("java.util.logging.config.class", oldJavaLoggingConfigClass);
 	}
 
 	@Test
@@ -174,6 +183,28 @@ public class SpiralKnightsGameProviderTest {
 		Assertions.assertEquals("--foo", command.get(command.size() - 1));
 	}
 
+	@Test
+	public void launcherAddsLogConfigClassWhenLogLevelIsSet() throws IOException {
+		TestApp app = createApp();
+		System.setProperty(SystemProperties.SPIRAL_KNIGHTS_APP_DIR, app.appDir.toString());
+		System.setProperty(SystemProperties.SPIRAL_KNIGHTS_LOG_LEVEL, "FINE");
+
+		List<String> command = SpiralKnightsLauncher.buildCommand(GetdownConfig.read(app.appDir), new String[0]);
+
+		Assertions.assertTrue(command.contains("-D" + SystemProperties.SPIRAL_KNIGHTS_LOG_LEVEL + "=FINE"));
+		Assertions.assertTrue(command.contains("-Djava.util.logging.config.class=" + SpiralKnightsLogConfig.class.getName()));
+	}
+
+	@Test
+	public void launcherRejectsInvalidLogLevel() throws IOException {
+		TestApp app = createApp();
+		System.setProperty(SystemProperties.SPIRAL_KNIGHTS_APP_DIR, app.appDir.toString());
+		System.setProperty(SystemProperties.SPIRAL_KNIGHTS_LOG_LEVEL, "not-a-level");
+
+		Assertions.assertThrows(FormattedException.class,
+				() -> SpiralKnightsLauncher.buildCommand(GetdownConfig.read(app.appDir), new String[0]));
+	}
+
 	private TestApp createApp() throws IOException {
 		Path appDir = tempDir.resolve("app");
 		Path codeDir = appDir.resolve("code");
@@ -208,6 +239,7 @@ public class SpiralKnightsGameProviderTest {
 		FabricLauncher launcher = mock();
 		when(launcher.getEnvironmentType()).thenReturn(EnvType.CLIENT);
 		when(launcher.getClassPath()).thenReturn(Collections.emptyList());
+		when(launcher.getEntrypoint()).thenReturn("com.threerings.projectx.client.ProjectXApp");
 		return launcher;
 	}
 
@@ -216,9 +248,38 @@ public class SpiralKnightsGameProviderTest {
 				JarOutputStream jos = new JarOutputStream(os)) {
 			for (String entry : entries) {
 				jos.putNextEntry(new JarEntry(entry));
+
+				if (entry.equals("com/threerings/projectx/client/ProjectXApp.class")) {
+					jos.write(createProjectXAppClass());
+				}
+
 				jos.closeEntry();
 			}
 		}
+	}
+
+	private static byte[] createProjectXAppClass() {
+		ClassWriter writer = new ClassWriter(0);
+		writer.visit(Opcodes.V1_8, Opcodes.ACC_PUBLIC, "com/threerings/projectx/client/ProjectXApp", null, "java/lang/Object", null);
+
+		MethodVisitor constructor = writer.visitMethod(Opcodes.ACC_PUBLIC, "<init>", "()V", null, null);
+		constructor.visitCode();
+		constructor.visitVarInsn(Opcodes.ALOAD, 0);
+		constructor.visitMethodInsn(Opcodes.INVOKESPECIAL, "java/lang/Object", "<init>", "()V", false);
+		constructor.visitInsn(Opcodes.RETURN);
+		constructor.visitMaxs(1, 1);
+		constructor.visitEnd();
+
+		MethodVisitor main = writer.visitMethod(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC, "main", "([Ljava/lang/String;)V", null, null);
+		main.visitCode();
+		main.visitLdcInsn("projectx.log");
+		main.visitMethodInsn(Opcodes.INVOKESTATIC, "com/threerings/util/ToolUtil", "configureLog", "(Ljava/lang/String;)V", false);
+		main.visitInsn(Opcodes.RETURN);
+		main.visitMaxs(1, 1);
+		main.visitEnd();
+
+		writer.visitEnd();
+		return writer.toByteArray();
 	}
 
 	private static void restore(String key, String value) {

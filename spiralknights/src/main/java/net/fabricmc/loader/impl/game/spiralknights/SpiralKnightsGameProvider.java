@@ -41,6 +41,7 @@ import net.fabricmc.loader.impl.FormattedException;
 import net.fabricmc.loader.impl.game.GameProvider;
 import net.fabricmc.loader.impl.game.patch.GameTransformer;
 import net.fabricmc.loader.impl.game.spiralknights.getdown.GetdownConfig;
+import net.fabricmc.loader.impl.game.spiralknights.patch.ConsoleLogMirrorPatch;
 import net.fabricmc.loader.impl.launch.FabricLauncher;
 import net.fabricmc.loader.impl.metadata.BuiltinModMetadata;
 import net.fabricmc.loader.impl.util.Arguments;
@@ -53,7 +54,7 @@ import net.fabricmc.loader.impl.util.log.LogCategory;
 public final class SpiralKnightsGameProvider implements GameProvider {
 	private static final Set<BuiltinTransform> TRANSFORMS = EnumSet.of(BuiltinTransform.STRIP_ENVIRONMENT, BuiltinTransform.CLASS_TWEAKS);
 
-	private final GameTransformer transformer = new GameTransformer();
+	private final GameTransformer transformer = new GameTransformer(new ConsoleLogMirrorPatch());
 	private GetdownConfig config;
 	private String version;
 	private String entrypoint;

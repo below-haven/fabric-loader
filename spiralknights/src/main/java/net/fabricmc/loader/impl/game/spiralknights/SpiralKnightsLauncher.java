@@ -24,6 +24,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import java.util.logging.Level;
 
 import net.fabricmc.loader.impl.FormattedException;
 import net.fabricmc.loader.impl.game.spiralknights.getdown.GetdownConfig;
@@ -35,6 +36,7 @@ import net.fabricmc.loader.impl.util.SystemProperties;
 public final class SpiralKnightsLauncher {
 	static final String BOOTSTRAPPED_PROPERTY = "fabric.spiralknights.bootstrapped";
 	private static final String KNOT_CLIENT = "net.fabricmc.loader.impl.launch.knot.KnotClient";
+	private static final String LOG_CONFIG_CLASS_PROPERTY = "java.util.logging.config.class";
 
 	private SpiralKnightsLauncher() {
 	}
@@ -85,6 +87,7 @@ public final class SpiralKnightsLauncher {
 			command.add(GetdownUtil.expand(arg, config.getAppDir(), version));
 		}
 
+		addLogConfigSystemProperties(command);
 		addCurrentSystemProperties(command);
 
 		// Spoof being launched by Getdown.
@@ -100,6 +103,21 @@ public final class SpiralKnightsLauncher {
 		Collections.addAll(command, args);
 
 		return command;
+	}
+
+	private static void addLogConfigSystemProperties(List<String> command) {
+		String level = System.getProperty(SystemProperties.SPIRAL_KNIGHTS_LOG_LEVEL);
+		if (level == null || level.trim().isEmpty()) return;
+
+		try {
+			Level.parse(level.trim());
+		} catch (IllegalArgumentException e) {
+			throw new FormattedException("Invalid Spiral Knights log level",
+					"%s must be a java.util.logging level, but got '%s'.",
+					SystemProperties.SPIRAL_KNIGHTS_LOG_LEVEL, level);
+		}
+
+		addSystemProperty(command, LOG_CONFIG_CLASS_PROPERTY, SpiralKnightsLogConfig.class.getName());
 	}
 
 	/**
