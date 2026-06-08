@@ -36,12 +36,10 @@ import net.fabricmc.loader.impl.util.log.LogCategory;
 public final class ConsoleLogMirrorPatch extends GamePatch {
 	/**
 	 * One of the first things the game does after its init is setup the logging system.
-	 *
+	 * <p>
 	 * <code>
 	 * public static void main(String[] args) throws Exception {
-	 * ...
 	 * ToolUtil.configureLog("projectx.log");
-	 * ...
 	 * }
 	 * </code>
 	 * <p>
@@ -81,8 +79,9 @@ public final class ConsoleLogMirrorPatch extends GamePatch {
 	}
 
 	/**
-	 * The game sets up the logging system to redirect sout to a log file.
-	 * * <code>
+	 * The game sets up the logging system to redirect System.out to a log file.
+	 * <p>
+	 * <code>
 	 * ToolUtil.configureLog("projectx.log");
 	 * </code>
 	 * <p>

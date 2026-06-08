@@ -30,7 +30,6 @@ import java.util.logging.LogManager;
 import net.fabricmc.loader.impl.util.SystemProperties;
 
 public final class SpiralKnightsLogConfig {
-	private static final String CONFIG_FILE_PROPERTY = "java.util.logging.config.file";
 	private static final String GLOBAL_LEVEL_PROPERTY = ".level";
 	private static final String CONSOLE_HANDLER_LEVEL_PROPERTY = "java.util.logging.ConsoleHandler.level";
 	private static final String HANDLERS_PROPERTY = "handlers";
@@ -49,8 +48,8 @@ public final class SpiralKnightsLogConfig {
 	}
 
 	/**
-	 * Get the configured Log level for Spiral Knights, if passed
- 	 */
+	 * Get the configured Log level for Spiral Knights, if passed.
+	 */
 	private static String getRequestedLevel() {
 		String level = System.getProperty(SystemProperties.SPIRAL_KNIGHTS_LOG_LEVEL);
 
@@ -95,7 +94,7 @@ public final class SpiralKnightsLogConfig {
 	}
 
 	static Path getConfigurationPath() {
-		String configFile = System.getProperty(CONFIG_FILE_PROPERTY);
+		String configFile = System.getProperty("java.util.logging.config.file");
 
 		if (configFile != null && !configFile.isEmpty()) {
 			return Paths.get(configFile);

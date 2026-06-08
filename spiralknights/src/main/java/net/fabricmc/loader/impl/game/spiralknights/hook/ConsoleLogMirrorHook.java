@@ -74,6 +74,7 @@ public final class ConsoleLogMirrorHook {
 		Handler mirrorHandler = new TerminalLogHandler(terminalErr);
 		Handler[] handlers = rootLogger.getHandlers();
 
+		//FIXME: Can we get away with a SimpleFormatter?
 		if (handlers.length > 0) {
 			Formatter formatter = handlers[0].getFormatter();
 

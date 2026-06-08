@@ -16,6 +16,10 @@
 
 package net.fabricmc.loader.impl.game.spiralknights;
 
+import static net.fabricmc.loader.impl.game.spiralknights.util.Command.addCurrentSystemProperties;
+import static net.fabricmc.loader.impl.game.spiralknights.util.Command.addLogConfigSystemProperties;
+import static net.fabricmc.loader.impl.game.spiralknights.util.Command.addSystemProperty;
+
 import java.io.File;
 import java.io.IOException;
 import java.nio.file.Path;
@@ -23,8 +27,6 @@ import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
-import java.util.Map;
-import java.util.logging.Level;
 
 import net.fabricmc.loader.impl.FormattedException;
 import net.fabricmc.loader.impl.game.spiralknights.getdown.GetdownConfig;
@@ -36,7 +38,6 @@ import net.fabricmc.loader.impl.util.SystemProperties;
 public final class SpiralKnightsLauncher {
 	static final String BOOTSTRAPPED_PROPERTY = "fabric.spiralknights.bootstrapped";
 	private static final String KNOT_CLIENT = "net.fabricmc.loader.impl.launch.knot.KnotClient";
-	private static final String LOG_CONFIG_CLASS_PROPERTY = "java.util.logging.config.class";
 
 	private SpiralKnightsLauncher() {
 	}
@@ -50,9 +51,7 @@ public final class SpiralKnightsLauncher {
 		String appDirProperty = System.getProperty(SystemProperties.SPIRAL_KNIGHTS_APP_DIR);
 
 		if (appDirProperty == null || appDirProperty.isEmpty()) {
-			throw new FormattedException("Missing Spiral Knights app directory",
-					"Set -D%s=<app dir> before launching %s.",
-					SystemProperties.SPIRAL_KNIGHTS_APP_DIR, SpiralKnightsLauncher.class.getName());
+			throw new FormattedException("Missing Spiral Knights app directory", "Set -D%s=<app dir> before launching %s.", SystemProperties.SPIRAL_KNIGHTS_APP_DIR, SpiralKnightsLauncher.class.getName());
 		}
 
 		try {
@@ -103,38 +102,6 @@ public final class SpiralKnightsLauncher {
 		Collections.addAll(command, args);
 
 		return command;
-	}
-
-	private static void addLogConfigSystemProperties(List<String> command) {
-		String level = System.getProperty(SystemProperties.SPIRAL_KNIGHTS_LOG_LEVEL);
-		if (level == null || level.trim().isEmpty()) return;
-
-		try {
-			Level.parse(level.trim());
-		} catch (IllegalArgumentException e) {
-			throw new FormattedException("Invalid Spiral Knights log level",
-					"%s must be a java.util.logging level, but got '%s'.",
-					SystemProperties.SPIRAL_KNIGHTS_LOG_LEVEL, level);
-		}
-
-		addSystemProperty(command, LOG_CONFIG_CLASS_PROPERTY, SpiralKnightsLogConfig.class.getName());
-	}
-
-	/**
-	 * Re-exports Fabric arguments to the provider.
-	 */
-	private static void addCurrentSystemProperties(List<String> command) {
-		for (Map.Entry<Object, Object> entry : System.getProperties().entrySet()) {
-			String key = String.valueOf(entry.getKey());
-
-			if (key.startsWith("fabric.")) {
-				addSystemProperty(command, key, String.valueOf(entry.getValue()));
-			}
-		}
-	}
-
-	private static void addSystemProperty(List<String> command, String key, String value) {
-		command.add("-D" + key + "=" + value);
 	}
 
 	private static String getAbsoluteClassPath() {
