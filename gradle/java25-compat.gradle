@@ -1,0 +1,92 @@
+def javaCompilerCompatRawDir = layout.buildDirectory.dir("java-compiler-compat/raw")
+def javaCompilerCompatClassesDir = layout.buildDirectory.dir("java-compiler-compat/classes")
+def javaCompilerCompatLegalDir = layout.buildDirectory.dir("java-compiler-compat/legal")
+def javaRuntimeRawDir = layout.buildDirectory.dir("java-runtime-for-proguard/raw")
+ext.javaRuntimeClassesDir = layout.buildDirectory.dir("java-runtime-for-proguard/classes")
+
+def java25Launcher = javaToolchains.launcherFor {
+	languageVersion = JavaLanguageVersion.of(25)
+}
+def java25Home = java25Launcher.map { it.metadata.installationPath.asFile }
+def java25Modules = java25Home.map { new File(it, "lib/modules") }
+def java25Jimage = java25Home.map {
+	def name = System.getProperty("os.name").toLowerCase(java.util.Locale.ROOT).contains("win") ? "jimage.exe" : "jimage"
+	return new File(it, "bin/${name}")
+}
+
+def registerJimageExtract = { String taskName, outputDir, List<String> includes ->
+	tasks.register(taskName, Exec) {
+		inputs.file(java25Modules)
+		outputs.dir(outputDir)
+
+		doFirst {
+			def modules = java25Modules.get()
+			def jimage = java25Jimage.get()
+			def destination = outputDir.get().asFile
+
+			if (!modules.isFile()) {
+				throw new GradleException("Unable to locate Java 25 module image: ${modules}")
+			}
+
+			if (!jimage.isFile()) {
+				throw new GradleException("Unable to locate Java 25 jimage tool: ${jimage}")
+			}
+
+			delete destination
+			destination.mkdirs()
+
+			def args = ['extract', "--dir=${destination.absolutePath}"]
+			includes.each {
+				args.add('--include')
+				args.add(it)
+			}
+			args.add(modules.absolutePath)
+			commandLine([jimage.absolutePath] + args)
+		}
+	}
+}
+
+def extractJavaCompilerCompat = registerJimageExtract('extractJavaCompilerCompat', javaCompilerCompatRawDir, ['/java.compiler/javax/**'])
+def extractJavaRuntimeForProguard = registerJimageExtract('extractJavaRuntimeForProguard', javaRuntimeRawDir, [])
+
+ext.javaCompilerCompatClasses = tasks.register('javaCompilerCompatClasses', Sync) {
+	dependsOn extractJavaCompilerCompat
+	from(javaCompilerCompatRawDir.map { it.dir("java.compiler") }) {
+		include 'javax/annotation/processing/**'
+		include 'javax/lang/model/**'
+		include 'javax/tools/**'
+	}
+	into javaCompilerCompatClassesDir
+}
+
+ext.javaCompilerCompatLegal = tasks.register('javaCompilerCompatLegal', Sync) {
+	from(java25Home.map { new File(it, "legal/java.compiler") }) {
+		include 'ADDITIONAL_LICENSE_INFO'
+		include 'ASSEMBLY_EXCEPTION'
+		include 'LICENSE'
+	}
+	into javaCompilerCompatLegalDir
+}
+
+ext.javaRuntimeForProguardClasses = tasks.register('javaRuntimeForProguardClasses', Sync) {
+	dependsOn extractJavaRuntimeForProguard
+	from(javaRuntimeRawDir) {
+		include '**/*.class'
+		exclude 'java.compiler/**'
+		exclude 'jdk.compiler/**'
+		exclude 'jdk.javadoc/**'
+		exclude 'jdk.jdeps/**'
+		exclude 'jdk.jshell/**'
+		exclude '**/module-info.class'
+		eachFile {
+			def slash = path.indexOf('/')
+
+			if (slash >= 0) {
+				path = path.substring(slash + 1)
+			}
+		}
+		includeEmptyDirs = false
+	}
+	duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+	into javaRuntimeClassesDir
+}

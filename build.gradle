@@ -4,7 +4,7 @@ import org.slf4j.LoggerFactory
 buildscript {
 	dependencies {
 		classpath 'org.kohsuke:github-api:1.135'
-		classpath 'com.guardsquare:proguard-gradle:7.7.0'
+		classpath 'com.guardsquare:proguard-gradle:7.9.1'
 	}
 }
 
@@ -166,6 +166,8 @@ shadowJar {
 
 import com.github.jengelman.gradle.plugins.shadow.tasks.ShadowJar
 
+apply from: rootProject.file('gradle/java25-compat.gradle')
+
 // Renaming in the shadow jar task doesnt seem to work, so do it here
 tasks.register('getSat4jAbout', Copy) {
 	dependsOn project.configurations.include
@@ -185,13 +187,17 @@ tasks.register('getSat4jAbout', Copy) {
 }
 
 tasks.register('fatJar', ShadowJar) {
-	dependsOn getSat4jAbout
+	dependsOn getSat4jAbout, javaCompilerCompatClasses, javaCompilerCompatLegal
 	from sourceSets.main.output
 	from(project(":minecraft").sourceSets.main.output) {
 		exclude 'META-INF/services/net.fabricmc.loader.impl.game.GameProvider'
 	}
 	from(project(":spiralknights").sourceSets.main.output) {
 		exclude 'META-INF/services/net.fabricmc.loader.impl.game.GameProvider'
+	}
+	from javaCompilerCompatClasses
+	into('META-INF/licenses/java.compiler') {
+		from javaCompilerCompatLegal
 	}
 	from getSat4jAbout.destinationDir
 
@@ -242,11 +248,11 @@ File proguardTmpFile = file("build/tmp/fabric-loader-${version}.jar")
 import proguard.gradle.ProGuardTask
 
 tasks.register('proguardJar', ProGuardTask) {
-	dependsOn patchFatJarMixinGson
+	dependsOn patchFatJarMixinGson, javaRuntimeForProguardClasses
 	def bundledClasspath = project.configurations.include + project.configurations.installer + project.configurations.development
 	def classpath = (project(":minecraft").configurations.compileClasspath + project(":spiralknights").configurations.compileClasspath) - bundledClasspath
 
-	inputs.files(fatJar, classpath)
+	inputs.files(fatJar, javaRuntimeClassesDir, classpath)
 	outputs.files(proguardTmpFile)
 
 	doFirst {
@@ -255,10 +261,7 @@ tasks.register('proguardJar', ProGuardTask) {
 		}
 	}
 
-	def java8 = javaToolchains.launcherFor {
-		languageVersion = JavaLanguageVersion.of(8)
-	}.get()
-	libraryjars java8.metadata.installationPath.file("jre/lib/rt.jar")
+	libraryjars javaRuntimeClassesDir
 
 	injars fatJar.archiveFile
 	outjars proguardTmpFile
