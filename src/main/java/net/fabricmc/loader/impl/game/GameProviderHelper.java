@@ -26,6 +26,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.Enumeration;
 import java.util.HashMap;
@@ -294,14 +295,71 @@ public final class GameProviderHelper {
 			emittedInfo = true;
 		}
 
+		Collection<Path> classpath = SystemProperties.isSet(SystemProperties.DEBUG_DEOBFUSCATE_WITH_CLASSPATH)
+				? launcher.getClassPath()
+				: Collections.emptyList();
+
 		try {
 			Files.createDirectories(deobfJarDir);
-			deobfuscate0(inputFiles, outputFiles, tmpFiles, mappingConfig.getMappings(), sourceNamespace, targetNamespace, launcher);
+			deobfuscate0(inputFiles, outputFiles, tmpFiles, mappingConfig.getMappings(), sourceNamespace, targetNamespace, classpath);
 		} catch (IOException e) {
 			throw new RuntimeException("error remapping game jars "+inputFiles, e);
 		}
 
 		return ret;
+	}
+
+	/**
+	 * Remaps the given class-bearing jars from one namespace to another, caching the results in {@code outputDir}.
+	 *
+	 * <p>Unlike {@link #deobfuscate}, the target namespace is explicit and there is no game id/version metadata
+	 * matching, so this can produce an arbitrary-namespace view of the game. Spiral Knights uses it to build an
+	 * intermediary-namespace copy of the (official) game to serve as the tiny-remapper class path when remapping
+	 * mods intermediary-&gt;official, so the mixin extension can resolve mixin targets.
+	 *
+	 * <p>Each input must contain at least one class file (see {@link #deobfuscate0}); callers should filter out
+	 * resource-only / native jars and pass them via {@code classpath} (or leave them off entirely) instead.
+	 *
+	 * @param classpath additional jars made visible to the remapper for hierarchy resolution, but not themselves remapped
+	 * @return the remapped output jars, in the same order as {@code inputFiles}
+	 */
+	public static List<Path> remapJars(List<Path> inputFiles, String sourceNamespace, String targetNamespace,
+			MappingTree mappings, Collection<Path> classpath, Path outputDir) throws IOException {
+		if (sourceNamespace.equals(targetNamespace) || inputFiles.isEmpty()) {
+			return new ArrayList<>(inputFiles);
+		}
+
+		List<Path> outputFiles = new ArrayList<>(inputFiles.size());
+		List<Path> tmpFiles = new ArrayList<>(inputFiles.size());
+		boolean anyMissing = false;
+
+		for (Path inputFile : inputFiles) {
+			String name = inputFile.getFileName().toString();
+			if (name.endsWith(".jar")) name = name.substring(0, name.length() - ".jar".length());
+
+			Path outputFile = outputDir.resolve(name + "-" + targetNamespace + ".jar");
+			Path tmpFile = outputDir.resolve(name + "-" + targetNamespace + ".jar.tmp");
+
+			if (Files.exists(tmpFile)) { // leftover from a failed previous run
+				Files.deleteIfExists(outputFile);
+				Files.deleteIfExists(tmpFile);
+			}
+
+			outputFiles.add(outputFile);
+			tmpFiles.add(tmpFile);
+
+			if (!Files.exists(outputFile)) anyMissing = true;
+		}
+
+		if (!anyMissing) return outputFiles;
+
+		// deobfuscate0 moves each tmp file onto its output and won't overwrite an existing one
+		for (Path outputFile : outputFiles) Files.deleteIfExists(outputFile);
+
+		Files.createDirectories(outputDir);
+		deobfuscate0(inputFiles, outputFiles, tmpFiles, mappings, sourceNamespace, targetNamespace, classpath);
+
+		return outputFiles;
 	}
 
 	private static Path getDeobfJarDir(Path gameDir, String gameId, String gameVersion) {
@@ -324,7 +382,7 @@ public final class GameProviderHelper {
 	}
 
 	private static void deobfuscate0(List<Path> inputFiles, List<Path> outputFiles, List<Path> tmpFiles,
-			MappingTree mappings, String sourceNamespace, String targetNamespace, FabricLauncher launcher) throws IOException {
+			MappingTree mappings, String sourceNamespace, String targetNamespace, Collection<Path> classpath) throws IOException {
 		TinyRemapper remapper = TinyRemapper.newRemapper(new TinyRemapperLoggerAdapter(LogCategory.GAME_REMAP))
 				.withMappings(TinyUtils.createMappingProvider(mappings, sourceNamespace, targetNamespace))
 				.rebuildSourceFilenames(true)
@@ -332,14 +390,12 @@ public final class GameProviderHelper {
 
 		Set<Path> depPaths = new HashSet<>();
 
-		if (SystemProperties.isSet(SystemProperties.DEBUG_DEOBFUSCATE_WITH_CLASSPATH)) {
-			for (Path path : launcher.getClassPath()) {
-				if (!inputFiles.contains(path)) {
-					depPaths.add(path);
+		for (Path path : classpath) {
+			if (!inputFiles.contains(path)) {
+				depPaths.add(path);
 
-					Log.debug(LogCategory.GAME_REMAP, "Appending '%s' to remapper classpath", path);
-					remapper.readClassPathAsync(path);
-				}
+				Log.debug(LogCategory.GAME_REMAP, "Appending '%s' to remapper classpath", path);
+				remapper.readClassPathAsync(path);
 			}
 		}
 

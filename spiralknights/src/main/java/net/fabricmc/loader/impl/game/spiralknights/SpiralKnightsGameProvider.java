@@ -27,11 +27,14 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.EnumSet;
+import java.util.Enumeration;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
 
 import net.fabricmc.api.EnvType;
@@ -40,6 +43,7 @@ import net.fabricmc.loader.api.metadata.ModMetadata;
 import net.fabricmc.loader.impl.FabricLoaderImpl;
 import net.fabricmc.loader.impl.FormattedException;
 import net.fabricmc.loader.impl.game.GameProvider;
+import net.fabricmc.loader.impl.game.GameProviderHelper;
 import net.fabricmc.loader.impl.game.patch.GameTransformer;
 import net.fabricmc.loader.impl.game.spiralknights.getdown.GetdownConfig;
 import net.fabricmc.loader.impl.game.spiralknights.patch.ConsoleLogMirrorPatch;
@@ -52,9 +56,11 @@ import net.fabricmc.loader.impl.util.LoaderUtil;
 import net.fabricmc.loader.impl.util.SystemProperties;
 import net.fabricmc.loader.impl.util.log.Log;
 import net.fabricmc.loader.impl.util.log.LogCategory;
+import net.fabricmc.mappingio.tree.MappingTree;
 
 public final class SpiralKnightsGameProvider implements GameProvider {
 	private static final Set<BuiltinTransform> TRANSFORMS = EnumSet.of(BuiltinTransform.STRIP_ENVIRONMENT, BuiltinTransform.CLASS_TWEAKS);
+	private static final String INTERMEDIARY_GAME_DIR_NAME = "intermediaryGameJars";
 
 	private final GameTransformer transformer = new GameTransformer(new ConsoleLogMirrorPatch());
 	private final SpiralKnightsMappingResolver mappingResolver;
@@ -66,6 +72,8 @@ public final class SpiralKnightsGameProvider implements GameProvider {
 	private final List<Path> gameJars = new ArrayList<>();
 	private Collection<Path> validParentClassPath = Collections.emptyList();
 	private SpiralKnightsMappingResolver.Result mappingResult;
+	private FabricLauncher launcher;
+	private Collection<Path> runtimeModRemapClasspath;
 
 	public SpiralKnightsGameProvider() {
 		this(new SpiralKnightsMappingResolver());
@@ -209,6 +217,7 @@ public final class SpiralKnightsGameProvider implements GameProvider {
 
 			launchArguments = arguments.toArray();
 			validParentClassPath = launcher.getClassPath();
+			this.launcher = launcher;
 		} catch (IOException e) {
 			throw ExceptionUtil.wrap(e);
 		}
@@ -304,6 +313,7 @@ public final class SpiralKnightsGameProvider implements GameProvider {
 		launcher.setValidParentClassPath(validParentClassPath);
 		System.setProperty("user.dir", config.getAppDir().toAbsolutePath().normalize().toString());
 
+		defaultMixinRemapTypeToStatic();
 		applyAppSystemProperties();
 		warnIfBundledJavaIsNotInUse();
 
@@ -313,6 +323,24 @@ public final class SpiralKnightsGameProvider implements GameProvider {
 		}
 
 		transformer.locateEntrypoints(launcher, gameJars);
+	}
+
+	/**
+	 * Spiral Knights mods are distributed in the intermediary namespace with their mixin annotations
+	 * already statically remapped (named -> intermediary, by shuttle) and carry no refmap. The runtime
+	 * remap therefore has to statically rewrite mixin targets and {@code @Shadow} members the rest of
+	 * the way (intermediary -> official); the refmap-based "mixin" mode has nothing to resolve against.
+	 *
+	 * <p>{@link net.fabricmc.loader.impl.discovery.RuntimeModRemapper} only enables tiny-remapper's
+	 * {@code MixinExtension} for a mod when its remap type resolves to {@code static}, defaulting to
+	 * {@code mixin} otherwise. Flip that default to {@code static} for SK so mixins are remapped like
+	 * everything else. A mod can still opt back into refmap mode via its {@code Fabric-Loom-Mixin-Remap-Type}
+	 * manifest attribute, and an explicit system property still wins.
+	 */
+	private static void defaultMixinRemapTypeToStatic() {
+		if (System.getProperty(SystemProperties.DEFAULT_MIXIN_REMAP_TYPE) == null) {
+			System.setProperty(SystemProperties.DEFAULT_MIXIN_REMAP_TYPE, "static");
+		}
 	}
 
 	private void warnIfBundledJavaIsNotInUse() {
@@ -429,9 +457,17 @@ public final class SpiralKnightsGameProvider implements GameProvider {
 
 	@Override
 	public Collection<Path> getRuntimeModRemapClasspath() {
+		if (runtimeModRemapClasspath != null) return runtimeModRemapClasspath;
+
 		Set<Path> ret = new LinkedHashSet<>();
 
-		for (Path gameJar : gameJars) {
+		// The game jars are official (obfuscated), but mods are distributed in the intermediary namespace and
+		// get remapped intermediary->official. tiny-remapper's mixin extension resolves a mixin's @Mixin target
+		// (and its members) through the class path, so the class path has to be in the mods' source namespace
+		// (intermediary). Feeding the official jars leaves every mixin target unresolved, which is why mixin
+		// targets and @Shadow members were previously left in intermediary form. Hand it an intermediary view
+		// of the game instead.
+		for (Path gameJar : resolveIntermediaryGameJars()) {
 			ret.add(LoaderUtil.normalizePath(gameJar));
 		}
 
@@ -439,7 +475,89 @@ public final class SpiralKnightsGameProvider implements GameProvider {
 			ret.add(LoaderUtil.normalizePath(path));
 		}
 
-		return Collections.unmodifiableList(new ArrayList<>(ret));
+		runtimeModRemapClasspath = Collections.unmodifiableList(new ArrayList<>(ret));
+		return runtimeModRemapClasspath;
+	}
+
+	/**
+	 * Produces an intermediary-namespace view of the game class path for use when remapping mods. The obfuscated
+	 * game jars are remapped official-&gt;intermediary (cached per game version under {@code .fabric}); jars without
+	 * any mapped classes (libraries, native bundles) are passed through unchanged, and also act as the remap class
+	 * path so the obfuscated jars' hierarchy resolves.
+	 */
+	private List<Path> resolveIntermediaryGameJars() {
+		String officialNs = MappingConfiguration.OFFICIAL_NAMESPACE;
+		String intermediaryNs = MappingConfiguration.INTERMEDIARY_NAMESPACE;
+
+		// No launcher/mappings means mod remapping is skipped anyway, so the class path namespace is moot.
+		if (launcher == null) return new ArrayList<>(gameJars);
+
+		MappingConfiguration mappingConfig = launcher.getMappingConfiguration();
+		if (mappingConfig == null) return new ArrayList<>(gameJars);
+
+		MappingTree mappings = mappingConfig.getMappings();
+		if (mappings == null) return new ArrayList<>(gameJars);
+
+		List<String> namespaces = new ArrayList<>();
+		namespaces.add(mappings.getSrcNamespace());
+		if (mappings.getDstNamespaces() != null) namespaces.addAll(mappings.getDstNamespaces());
+
+		if (!namespaces.contains(officialNs) || !namespaces.contains(intermediaryNs)) {
+			Log.warn(LogCategory.GAME_PROVIDER, "Spiral Knights mappings are missing the %s or %s namespace; mixin targets in mods will not be remapped", officialNs, intermediaryNs);
+			return new ArrayList<>(gameJars);
+		}
+
+		Set<String> mappedClasses = new HashSet<>();
+
+		for (MappingTree.ClassMapping cls : mappings.getClasses()) {
+			String name = cls.getName(officialNs);
+			if (name != null) mappedClasses.add(name);
+		}
+
+		List<Path> toRemap = new ArrayList<>();
+		List<Path> passthrough = new ArrayList<>();
+
+		for (Path jar : gameJars) {
+			if (jarContainsAnyClass(jar, mappedClasses)) {
+				toRemap.add(jar);
+			} else {
+				passthrough.add(jar);
+			}
+		}
+
+		Path outputDir = config.getAppDir()
+				.resolve(FabricLoaderImpl.CACHE_DIR_NAME)
+				.resolve(INTERMEDIARY_GAME_DIR_NAME)
+				.resolve(version);
+
+		List<Path> ret = new ArrayList<>();
+
+		try {
+			ret.addAll(GameProviderHelper.remapJars(toRemap, officialNs, intermediaryNs, mappings, passthrough, outputDir));
+		} catch (IOException e) {
+			throw ExceptionUtil.wrap(e);
+		}
+
+		ret.addAll(passthrough);
+		return ret;
+	}
+
+	private static boolean jarContainsAnyClass(Path jar, Set<String> classNames) {
+		try (ZipFile zip = new ZipFile(jar.toFile())) {
+			Enumeration<? extends ZipEntry> entries = zip.entries();
+
+			while (entries.hasMoreElements()) {
+				String name = entries.nextElement().getName();
+
+				if (name.endsWith(".class") && classNames.contains(name.substring(0, name.length() - ".class".length()))) {
+					return true;
+				}
+			}
+		} catch (IOException e) {
+			Log.warn(LogCategory.GAME_PROVIDER, "Could not inspect game jar %s while preparing the mod remap class path: %s", jar, e.toString());
+		}
+
+		return false;
 	}
 
 	List<Path> getGameJars() {
