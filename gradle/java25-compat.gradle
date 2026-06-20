@@ -4,13 +4,10 @@ def javaCompilerCompatLegalDir = layout.buildDirectory.dir("java-compiler-compat
 def javaZipFsCompatRawDir = layout.buildDirectory.dir("java-zipfs-compat/raw")
 def javaZipFsCompatClassesDir = layout.buildDirectory.dir("java-zipfs-compat/classes")
 def javaZipFsCompatLegalDir = layout.buildDirectory.dir("java-zipfs-compat/legal")
-def javaZipFsCompatModuleInfoSource = layout.buildDirectory.file("java-zipfs-compat/module-info-src/module-info.java")
-def javaZipFsCompatModuleInfoClassesDir = layout.buildDirectory.dir("java-zipfs-compat/module-info-classes")
-def javaZipFsCompatModuleJarDir = layout.buildDirectory.dir("java-zipfs-compat/module")
+def javaZipFsCompatServiceDir = layout.buildDirectory.dir("java-zipfs-compat/service")
 def javaRuntimeRawDir = layout.buildDirectory.dir("java-runtime-for-proguard/raw")
 ext.javaRuntimeClassesDir = layout.buildDirectory.dir("java-runtime-for-proguard/classes")
-ext.javaZipFsCompatModuleName = "net.fabricmc.loader.zipfs"
-ext.javaZipFsCompatModuleJarName = "${javaZipFsCompatModuleName}.jar"
+def javaZipFsCompatProviderClass = "jdk.nio.zipfs.ZipFileSystemProvider"
 
 def java25Launcher = javaToolchains.launcherFor {
 	languageVersion = JavaLanguageVersion.of(25)
@@ -24,7 +21,6 @@ def java25Executable = { String baseName ->
 	}
 }
 def java25Jimage = java25Executable("jimage")
-def java25Javac = java25Executable("javac")
 
 def registerJimageExtract = { String taskName, outputDir, List<String> includes ->
 	tasks.register(taskName, Exec) {
@@ -81,11 +77,27 @@ ext.javaCompilerCompatLegal = tasks.register('javaCompilerCompatLegal', Sync) {
 	into javaCompilerCompatLegalDir
 }
 
+// Registers jdk.nio.zipfs.ZipFileSystemProvider with the JDK's global FileSystemProvider
+// registry via classpath ServiceLoader (FileSystemProvider.installedProviders()), so the "jar"
+// scheme works for every library on the stripped Spiral Knights runtime without a JPMS module.
+def writeJavaZipFsCompatService = tasks.register('writeJavaZipFsCompatService') {
+	inputs.property("providerClass", javaZipFsCompatProviderClass)
+	def serviceFile = javaZipFsCompatServiceDir.map { it.file("META-INF/services/java.nio.file.spi.FileSystemProvider") }
+	outputs.file(serviceFile)
+
+	doLast {
+		def file = serviceFile.get().asFile
+		file.parentFile.mkdirs()
+		file.text = "${javaZipFsCompatProviderClass}\n"
+	}
+}
+
 ext.javaZipFsCompatClasses = tasks.register('javaZipFsCompatClasses', Sync) {
-	dependsOn extractJavaZipFsCompat
+	dependsOn extractJavaZipFsCompat, writeJavaZipFsCompatService
 	from(javaZipFsCompatRawDir.map { it.dir("jdk.zipfs") }) {
 		include 'jdk/nio/zipfs/**'
 	}
+	from javaZipFsCompatServiceDir
 	into javaZipFsCompatClassesDir
 }
 
@@ -96,56 +108,6 @@ ext.javaZipFsCompatLegal = tasks.register('javaZipFsCompatLegal', Sync) {
 		include 'LICENSE'
 	}
 	into javaZipFsCompatLegalDir
-}
-
-def writeJavaZipFsCompatModuleInfo = tasks.register('writeJavaZipFsCompatModuleInfo') {
-	inputs.property("moduleName", javaZipFsCompatModuleName)
-	outputs.file(javaZipFsCompatModuleInfoSource)
-
-	doLast {
-		def source = javaZipFsCompatModuleInfoSource.get().asFile
-		source.parentFile.mkdirs()
-		source.text = """module ${javaZipFsCompatModuleName} {
-\tprovides java.nio.file.spi.FileSystemProvider with jdk.nio.zipfs.ZipFileSystemProvider;
-}
-"""
-	}
-}
-
-def compileJavaZipFsCompatModuleInfo = tasks.register('compileJavaZipFsCompatModuleInfo', Exec) {
-	dependsOn writeJavaZipFsCompatModuleInfo, javaZipFsCompatClasses
-	inputs.file(javaZipFsCompatModuleInfoSource)
-	inputs.dir(javaZipFsCompatClassesDir)
-	outputs.dir(javaZipFsCompatModuleInfoClassesDir)
-
-	doFirst {
-		def javac = java25Javac.get()
-		def source = javaZipFsCompatModuleInfoSource.get().asFile
-		def classes = javaZipFsCompatClassesDir.get().asFile
-		def destination = javaZipFsCompatModuleInfoClassesDir.get().asFile
-
-		if (!javac.isFile()) {
-			throw new GradleException("Unable to locate Java 25 javac tool: ${javac}")
-		}
-
-		delete destination
-		destination.mkdirs()
-
-		commandLine javac.absolutePath,
-				'--patch-module', "${javaZipFsCompatModuleName}=${classes.absolutePath}",
-				'-d', destination.absolutePath,
-				source.absolutePath
-	}
-}
-
-ext.javaZipFsCompatModuleJar = tasks.register('javaZipFsCompatModuleJar', Jar) {
-	dependsOn compileJavaZipFsCompatModuleInfo
-	archiveFileName = javaZipFsCompatModuleJarName
-	destinationDirectory = javaZipFsCompatModuleJarDir
-	from javaZipFsCompatModuleInfoClassesDir
-	from(javaZipFsCompatClassesDir) {
-		include 'jdk/nio/zipfs/**'
-	}
 }
 
 ext.javaRuntimeForProguardClasses = tasks.register('javaRuntimeForProguardClasses', Sync) {

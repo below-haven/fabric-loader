@@ -40,7 +40,6 @@ import org.objectweb.asm.MethodVisitor;
 import org.objectweb.asm.Opcodes;
 
 import net.fabricmc.api.EnvType;
-import net.fabricmc.loader.impl.FabricLoaderImpl;
 import net.fabricmc.loader.impl.FormattedException;
 import net.fabricmc.loader.impl.game.spiralknights.getdown.GetdownConfig;
 import net.fabricmc.loader.impl.launch.FabricLauncher;
@@ -217,9 +216,6 @@ public class SpiralKnightsGameProviderTest {
 		System.setProperty("user.dir", tempDir.toString());
 
 		List<String> command = SpiralKnightsLauncher.buildCommand(GetdownConfig.read(app.appDir), new String[] { "--foo" });
-		Path zipFsModule = app.appDir.resolve(FabricLoaderImpl.CACHE_DIR_NAME)
-				.resolve("modules")
-				.resolve("net.fabricmc.loader.zipfs.jar");
 
 		Assertions.assertEquals(app.appDir.resolve("java_vm/bin/java").toString(), command.get(0));
 		Assertions.assertTrue(command.contains("-Xdock:icon=" + app.appDir + "/rsrc/ui/icon/desktop.icns"));
@@ -228,14 +224,13 @@ public class SpiralKnightsGameProviderTest {
 		Assertions.assertTrue(command.contains("-XX:-CreateCoredumpOnCrash"));
 		Assertions.assertTrue(command.contains("--add-opens=java.base/java.lang=ALL-UNNAMED"));
 		Assertions.assertTrue(command.contains("--add-opens=java.base/java.util=ALL-UNNAMED"));
-		Assertions.assertTrue(command.contains("--module-path"));
-		Assertions.assertTrue(command.contains(zipFsModule.toString()));
-		Assertions.assertTrue(command.contains("--add-modules"));
-		Assertions.assertTrue(command.contains("net.fabricmc.loader.zipfs"));
+		// zipfs is now registered via a classpath META-INF/services descriptor, so the relaunch
+		// no longer needs a synthetic module on the module path.
+		Assertions.assertFalse(command.contains("--add-modules"));
+		Assertions.assertFalse(command.contains("net.fabricmc.loader.zipfs"));
 		Assertions.assertTrue(command.contains("--enable-native-access=ALL-UNNAMED"));
 		Assertions.assertTrue(command.contains(tempDir.resolve("fabric-loader.jar").toString() + File.pathSeparator + tempDir.resolve("absolute.jar")));
 		Assertions.assertTrue(command.contains("net.fabricmc.loader.impl.launch.knot.KnotClient"));
-		Assertions.assertTrue(Files.isRegularFile(zipFsModule));
 		Assertions.assertEquals("--foo", command.get(command.size() - 1));
 	}
 

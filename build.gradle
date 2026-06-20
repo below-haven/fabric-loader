@@ -168,13 +168,6 @@ import com.github.jengelman.gradle.plugins.shadow.tasks.ShadowJar
 
 apply from: rootProject.file('gradle/java25-compat.gradle')
 
-tasks.named('processResources') {
-	dependsOn javaZipFsCompatModuleJar
-	into('META-INF/fabric-loader') {
-		from javaZipFsCompatModuleJar
-	}
-}
-
 // Renaming in the shadow jar task doesnt seem to work, so do it here
 tasks.register('getSat4jAbout', Copy) {
 	dependsOn project.configurations.include
