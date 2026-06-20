@@ -30,6 +30,7 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 import java.util.jar.Attributes.Name;
 import java.util.jar.Manifest;
 import java.util.zip.ZipEntry;
@@ -124,6 +125,21 @@ public final class MappingConfiguration {
 		MappingTree tree = getMappings();
 
 		return !tree.getClasses().isEmpty();
+	}
+
+	public boolean setProviderMappingPath(Path path) {
+		Objects.requireNonNull(path, "null path");
+
+		if (initializedMetadata || initializedMappings || mappingSource != null) {
+			throw new IllegalStateException("Mappings already initialized");
+		}
+
+		if (System.getProperty(SystemProperties.MAPPING_PATH) != null) {
+			return false;
+		}
+
+		mappingSource = new MappingSource(null, path.toAbsolutePath().normalize());
+		return true;
 	}
 
 	public String getRuntimeNamespace() {

@@ -58,26 +58,25 @@ public final class FabricMixinBootstrap {
 
 		MixinBootstrap.init();
 
-		if (FabricLauncherBase.getLauncher().isDevelopment()) {
-			MappingConfiguration config = FabricLauncherBase.getLauncher().getMappingConfiguration();
-			MappingTree mappings = config.getMappings();
-			final String modNs = config.getDefaultModDistributionNamespace();
-			String runtimeNs = config.getRuntimeNamespace();
+		MappingConfiguration mappingConfig = FabricLauncherBase.getLauncher().getMappingConfiguration();
+		MappingTree mappings = mappingConfig.getMappings();
+		final String modNs = mappingConfig.getDefaultModDistributionNamespace();
+		String runtimeNs = mappingConfig.getRuntimeNamespace();
 
-			if (config.hasAnyMappings() && !modNs.equals(runtimeNs)) {
-				List<String> namespaces = new ArrayList<>(mappings.getDstNamespaces());
-				namespaces.add(mappings.getSrcNamespace());
+		if (mappingConfig.hasAnyMappings() && !modNs.equals(runtimeNs)) {
+			List<String> namespaces = new ArrayList<>(mappings.getDstNamespaces());
+			namespaces.add(mappings.getSrcNamespace());
 
-				if (namespaces.contains(modNs) && namespaces.contains(runtimeNs)) {
-					System.setProperty("mixin.env.remapRefMap", "true");
+			if (namespaces.contains(modNs) && namespaces.contains(runtimeNs)) {
+				System.setProperty("mixin.env.remapRefMap", "true");
 
-					try {
-						MixinIntermediaryDevRemapper remapper = new MixinIntermediaryDevRemapper(mappings, modNs, runtimeNs);
-						MixinEnvironment.getDefaultEnvironment().getRemappers().add(remapper);
-						Log.info(LogCategory.MIXIN, "Loaded Fabric development mappings for mixin remapper!");
-					} catch (Exception e) {
-						Log.error(LogCategory.MIXIN, "Fabric development environment setup error - the game will probably crash soon!", e);
-					}
+				try {
+					// The class name is historical; this remapper is used whenever mods and runtime use different namespaces.
+					MixinIntermediaryDevRemapper remapper = new MixinIntermediaryDevRemapper(mappings, modNs, runtimeNs);
+					MixinEnvironment.getDefaultEnvironment().getRemappers().add(remapper);
+					Log.info(LogCategory.MIXIN, "Loaded Fabric mappings for mixin remapper from %s to %s!", modNs, runtimeNs);
+				} catch (Exception e) {
+					Log.error(LogCategory.MIXIN, "Fabric mapping remapper setup error - the game will probably crash soon!", e);
 				}
 			}
 		}

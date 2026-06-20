@@ -18,24 +18,31 @@ package net.fabricmc.loader.impl.discovery;
 
 import java.io.File;
 import java.io.IOException;
+import java.io.InputStream;
 import java.net.URISyntaxException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.FileSystem;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.jar.Attributes;
 import java.util.jar.Manifest;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
+import java.util.zip.ZipFile;
 
 import org.objectweb.asm.commons.Remapper;
 
@@ -65,8 +72,13 @@ public final class RuntimeModRemapper {
 	private static final String REMAP_TYPE_MANIFEST_KEY = "Fabric-Loom-Mixin-Remap-Type";
 	private static final String REMAP_TYPE_MIXIN = "mixin";
 	private static final String REMAP_TYPE_STATIC = "static";
+	private static final Pattern FILE_NAME_SANITIZING_PATTERN = Pattern.compile("[^\\w\\.\\-\\+]+");
 
 	public static void remap(Collection<ModCandidateImpl> modCandidates, Path tmpDir, Path outputDir) {
+		remap(modCandidates, tmpDir, outputDir, Collections.emptyList());
+	}
+
+	public static void remap(Collection<ModCandidateImpl> modCandidates, Path tmpDir, Path outputDir, Collection<Path> remapClasspath) {
 		List<ModCandidateImpl> modsToRemap = new ArrayList<>();
 		Set<InputTag> remapMixins = new HashSet<>();
 
@@ -81,17 +93,23 @@ public final class RuntimeModRemapper {
 		MappingConfiguration config = FabricLauncherBase.getLauncher().getMappingConfiguration();
 		String modNs = config.getDefaultModDistributionNamespace();
 		String runtimeNs = config.getRuntimeNamespace();
-		if (modNs.equals(runtimeNs) || !config.hasAnyMappings()) return;
+		if (modNs.equals(runtimeNs)) return;
+
+		requireMappings(config, modNs, runtimeNs);
 
 		Map<ModCandidateImpl, RemapInfo> infoMap = new HashMap<>();
 
 		TinyRemapper remapper = null;
 
 		try {
+			Files.createDirectories(tmpDir);
+			Files.createDirectories(outputDir);
+
 			FabricLauncher launcher = FabricLauncherBase.getLauncher();
 
 			ClassTweaker mergedClassTweaker = ClassTweaker.newInstance();
 			mergedClassTweaker.visitHeader(modNs);
+			boolean needsRemapWork = false;
 
 			for (ModCandidateImpl mod : modsToRemap) {
 				RemapInfo info = new RemapInfo();
@@ -107,9 +125,6 @@ public final class RuntimeModRemapper {
 					info.inputIsTemp = true;
 				}
 
-				info.outputPath = outputDir.resolve(mod.getDefaultFileName());
-				Files.deleteIfExists(info.outputPath);
-
 				String classTweaker = mod.getMetadata().getClassTweaker();
 
 				if (classTweaker != null) {
@@ -124,6 +139,23 @@ public final class RuntimeModRemapper {
 
 					ClassTweakerReader.create(mergedClassTweaker).read(info.classTweaker, modNs);
 				}
+
+				info.outputPath = outputDir.resolve(getRemappedFileName(mod, info.inputPath));
+
+				if (isValidJar(info.outputPath)) {
+					info.reuseOutput = true;
+				} else {
+					Files.deleteIfExists(info.outputPath);
+					needsRemapWork = true;
+				}
+			}
+
+			if (!needsRemapWork) {
+				for (ModCandidateImpl mod : modsToRemap) {
+					mod.setPaths(Collections.singletonList(infoMap.get(mod).outputPath));
+				}
+
+				return;
 			}
 
 			remapper = TinyRemapper.newRemapper(new TinyRemapperLoggerAdapter(LogCategory.MOD_REMAP))
@@ -135,7 +167,7 @@ public final class RuntimeModRemapper {
 					.build();
 
 			try {
-				remapper.readClassPathAsync(getRemapClasspath().toArray(new Path[0]));
+				remapper.readClassPathAsync(getRemapClasspath(remapClasspath, modNs, runtimeNs).toArray(new Path[0]));
 			} catch (IOException e) {
 				throw new RuntimeException("Failed to populate remap classpath", e);
 			}
@@ -144,6 +176,7 @@ public final class RuntimeModRemapper {
 
 			for (ModCandidateImpl mod : modsToRemap) {
 				RemapInfo info = infoMap.get(mod);
+				if (info.reuseOutput) continue;
 
 				InputTag tag = remapper.createInputTag();
 				info.tag = tag;
@@ -158,27 +191,29 @@ public final class RuntimeModRemapper {
 			//Done in a 2nd loop as we need to make sure all the inputs are present before remapping
 			for (ModCandidateImpl mod : modsToRemap) {
 				RemapInfo info = infoMap.get(mod);
+				if (info.reuseOutput) continue;
+
 				OutputConsumerPath outputConsumer = new OutputConsumerPath.Builder(info.outputPath).build();
 
-				FileSystemUtil.FileSystemDelegate delegate = FileSystemUtil.getJarFileSystem(info.inputPath, false);
+				try (FileSystemUtil.FileSystemDelegate delegate = FileSystemUtil.getJarFileSystem(info.inputPath, false)) {
+					if (delegate.get() == null) {
+						throw new RuntimeException("Could not open JAR file " + info.inputPath.getFileName() + " for NIO reading!");
+					}
 
-				if (delegate.get() == null) {
-					throw new RuntimeException("Could not open JAR file " + info.inputPath.getFileName() + " for NIO reading!");
+					Path inputJar = delegate.get().getRootDirectories().iterator().next();
+					outputConsumer.addNonClassFiles(inputJar, NonClassCopyMode.FIX_META_INF, remapper);
+
+					info.outputConsumerPath = outputConsumer;
+
+					remapper.apply(outputConsumer, info.tag);
 				}
-
-				Path inputJar = delegate.get().getRootDirectories().iterator().next();
-				outputConsumer.addNonClassFiles(inputJar, NonClassCopyMode.FIX_META_INF, remapper);
-
-				info.outputConsumerPath = outputConsumer;
-
-				remapper.apply(outputConsumer, info.tag);
 			}
 
 			//Done in a 3rd loop as this can happen when the remapper is doing its thing.
 			for (ModCandidateImpl mod : modsToRemap) {
 				RemapInfo info = infoMap.get(mod);
 
-				if (info.classTweaker != null) {
+				if (!info.reuseOutput && info.classTweaker != null) {
 					info.classTweaker = remapClassTweaker(info.classTweaker, remapper.getEnvironment().getRemapper(), modNs, runtimeNs);
 				}
 			}
@@ -188,9 +223,11 @@ public final class RuntimeModRemapper {
 			for (ModCandidateImpl mod : modsToRemap) {
 				RemapInfo info = infoMap.get(mod);
 
-				info.outputConsumerPath.close();
+				if (info.outputConsumerPath != null) {
+					info.outputConsumerPath.close();
+				}
 
-				if (info.classTweakerPath != null) {
+				if (!info.reuseOutput && info.classTweakerPath != null) {
 					try (FileSystemUtil.FileSystemDelegate jarFs = FileSystemUtil.getJarFileSystem(info.outputPath, false)) {
 						FileSystem fs = jarFs.get();
 
@@ -211,11 +248,19 @@ public final class RuntimeModRemapper {
 					continue;
 				}
 
+				if (info.reuseOutput) {
+					continue;
+				}
+
 				try {
 					Files.deleteIfExists(info.outputPath);
 				} catch (IOException e) {
 					Log.warn(LogCategory.MOD_REMAP, "Error deleting failed output jar %s", info.outputPath, e);
 				}
+			}
+
+			if (t instanceof FormattedException) {
+				throw (FormattedException) t;
 			}
 
 			throw new FormattedException("Failed to remap mods!", t);
@@ -224,10 +269,38 @@ public final class RuntimeModRemapper {
 				try {
 					if (info.inputIsTemp) Files.deleteIfExists(info.inputPath);
 				} catch (IOException e) {
-					Log.warn(LogCategory.MOD_REMAP, "Error deleting temporary input jar %s", info.inputIsTemp, e);
+					Log.warn(LogCategory.MOD_REMAP, "Error deleting temporary input jar %s", info.inputPath, e);
 				}
 			}
 		}
+	}
+
+	private static void requireMappings(MappingConfiguration config, String modNs, String runtimeNs) {
+		if (!config.hasAnyMappings()) {
+			throw cannotRemap(modNs, runtimeNs, "no mappings are available");
+		}
+
+		List<String> namespaces = config.getNamespaces();
+
+		if (namespaces == null || !namespaces.contains(modNs) || !namespaces.contains(runtimeNs)) {
+			throw cannotRemap(modNs, runtimeNs, String.format(Locale.ROOT,
+					"mapping namespaces %s do not include both %s and %s", namespaces, modNs, runtimeNs));
+		}
+	}
+
+	private static FormattedException cannotRemap(String modNs, String runtimeNs, String reason) {
+		String gameName = "the current game";
+		String gameVersion = null;
+
+		if (FabricLoaderImpl.INSTANCE.tryGetGameProvider() != null) {
+			gameName = FabricLoaderImpl.INSTANCE.getGameProvider().getGameName();
+			gameVersion = FabricLoaderImpl.INSTANCE.getGameProvider().getRawGameVersion();
+		}
+
+		String target = gameVersion == null ? gameName : gameName + " " + gameVersion;
+
+		return new FormattedException("Cannot remap mods!",
+				"Cannot remap mods from " + modNs + " to " + runtimeNs + " for " + target + ": " + reason + ".");
 	}
 
 	private static byte[] remapClassTweaker(byte[] input, Remapper remapper, String modNs, String runtimeNs) {
@@ -238,18 +311,100 @@ public final class RuntimeModRemapper {
 		return writer.getOutput();
 	}
 
-	private static List<Path> getRemapClasspath() throws IOException {
-		String remapClasspathFile = System.getProperty(SystemProperties.REMAP_CLASSPATH_FILE);
+	private static List<Path> getRemapClasspath(Collection<Path> providerClasspath, String modNs, String runtimeNs) throws IOException {
+		Set<Path> ret = new LinkedHashSet<>();
 
-		if (remapClasspathFile == null) {
-			throw new RuntimeException("No remapClasspathFile provided");
+		if (providerClasspath != null) {
+			for (Path path : providerClasspath) {
+				if (path != null) {
+					ret.add(path.toAbsolutePath().normalize());
+				}
+			}
 		}
 
-		String content = new String(Files.readAllBytes(Paths.get(remapClasspathFile)), StandardCharsets.UTF_8);
+		String remapClasspathFile = System.getProperty(SystemProperties.REMAP_CLASSPATH_FILE);
 
-		return Arrays.stream(content.split(File.pathSeparator))
-				.map(Paths::get)
-				.collect(Collectors.toList());
+		if (remapClasspathFile != null) {
+			String content = new String(Files.readAllBytes(Paths.get(remapClasspathFile)), StandardCharsets.UTF_8);
+
+			ret.addAll(Arrays.stream(content.split(File.pathSeparator))
+					.filter(s -> !s.isEmpty())
+					.map(Paths::get)
+					.map(path -> path.toAbsolutePath().normalize())
+					.collect(Collectors.toList()));
+		}
+
+		if (ret.isEmpty()) {
+			throw cannotRemap(modNs, runtimeNs,
+					"no remap classpath is available; provide fabric.remapClasspathFile or a game-provider remap classpath");
+		}
+
+		return new ArrayList<>(ret);
+	}
+
+	private static String getRemappedFileName(ModCandidateImpl mod, Path inputPath) throws IOException {
+		String inputHash = hashFile(inputPath);
+		String ret = String.format(Locale.ROOT, "%s-%s-%s-loader-%s.jar",
+				sanitizeFileName(mod.getId()),
+				sanitizeFileName(mod.getVersion().getFriendlyString()),
+				inputHash.substring(0, 16),
+				sanitizeFileName(FabricLoaderImpl.VERSION));
+
+		if (ret.length() > 160) {
+			ret = ret.substring(0, 80).concat(ret.substring(ret.length() - 80));
+		}
+
+		return ret;
+	}
+
+	private static String sanitizeFileName(String input) {
+		String ret = FILE_NAME_SANITIZING_PATTERN.matcher(input).replaceAll("_");
+
+		return ret.isEmpty() ? "_" : ret;
+	}
+
+	private static String hashFile(Path path) throws IOException {
+		MessageDigest digest = newSha256Digest();
+		byte[] buffer = new byte[8192];
+
+		try (InputStream is = Files.newInputStream(path)) {
+			int len;
+
+			while ((len = is.read(buffer)) >= 0) {
+				digest.update(buffer, 0, len);
+			}
+		}
+
+		return toHex(digest.digest());
+	}
+
+	private static MessageDigest newSha256Digest() {
+		try {
+			return MessageDigest.getInstance("SHA-256");
+		} catch (NoSuchAlgorithmException e) {
+			throw new AssertionError(e);
+		}
+	}
+
+	private static String toHex(byte[] bytes) {
+		StringBuilder ret = new StringBuilder(bytes.length * 2);
+
+		for (byte b : bytes) {
+			ret.append(Character.forDigit((b >>> 4) & 0xf, 16));
+			ret.append(Character.forDigit(b & 0xf, 16));
+		}
+
+		return ret.toString();
+	}
+
+	private static boolean isValidJar(Path path) {
+		if (!Files.isRegularFile(path)) return false;
+
+		try (ZipFile ignored = new ZipFile(path.toFile())) {
+			return true;
+		} catch (IOException e) {
+			return false;
+		}
 	}
 
 	/**
@@ -274,6 +429,7 @@ public final class RuntimeModRemapper {
 		Path inputPath;
 		Path outputPath;
 		boolean inputIsTemp;
+		boolean reuseOutput;
 		OutputConsumerPath outputConsumerPath;
 		String classTweakerPath;
 		byte[] classTweaker;

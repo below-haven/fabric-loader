@@ -18,6 +18,7 @@ package net.fabricmc.loader.impl.game;
 
 import java.nio.file.Path;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.List;
 import java.util.Objects;
 import java.util.Set;
@@ -79,6 +80,14 @@ public interface GameProvider { // name directly referenced in net.fabricmc.load
 
 	default String getDefaultModDistributionNamespace(String defaultNs) {
 		return defaultNs;
+	}
+
+	default boolean requiresRuntimeModRemap() {
+		return false;
+	}
+
+	default Collection<Path> getRuntimeModRemapClasspath() {
+		return Collections.emptyList();
 	}
 
 	default boolean canOpenErrorGui() {

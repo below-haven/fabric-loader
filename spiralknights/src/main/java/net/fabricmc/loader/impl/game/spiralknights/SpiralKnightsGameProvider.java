@@ -28,6 +28,7 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.EnumSet;
 import java.util.HashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -43,6 +44,7 @@ import net.fabricmc.loader.impl.game.patch.GameTransformer;
 import net.fabricmc.loader.impl.game.spiralknights.getdown.GetdownConfig;
 import net.fabricmc.loader.impl.game.spiralknights.patch.ConsoleLogMirrorPatch;
 import net.fabricmc.loader.impl.launch.FabricLauncher;
+import net.fabricmc.loader.impl.launch.MappingConfiguration;
 import net.fabricmc.loader.impl.metadata.BuiltinModMetadata;
 import net.fabricmc.loader.impl.util.Arguments;
 import net.fabricmc.loader.impl.util.ExceptionUtil;
@@ -55,6 +57,7 @@ public final class SpiralKnightsGameProvider implements GameProvider {
 	private static final Set<BuiltinTransform> TRANSFORMS = EnumSet.of(BuiltinTransform.STRIP_ENVIRONMENT, BuiltinTransform.CLASS_TWEAKS);
 
 	private final GameTransformer transformer = new GameTransformer(new ConsoleLogMirrorPatch());
+	private final SpiralKnightsMappingResolver mappingResolver;
 	private GetdownConfig config;
 	private String version;
 	private String entrypoint;
@@ -62,6 +65,15 @@ public final class SpiralKnightsGameProvider implements GameProvider {
 	private String[] launchArguments;
 	private final List<Path> gameJars = new ArrayList<>();
 	private Collection<Path> validParentClassPath = Collections.emptyList();
+	private SpiralKnightsMappingResolver.Result mappingResult;
+
+	public SpiralKnightsGameProvider() {
+		this(new SpiralKnightsMappingResolver());
+	}
+
+	SpiralKnightsGameProvider(SpiralKnightsMappingResolver mappingResolver) {
+		this.mappingResolver = mappingResolver;
+	}
 
 	/**
 	 * Fabric uses the game id as the stable, machine-readable name for this provider.
@@ -192,6 +204,9 @@ public final class SpiralKnightsGameProvider implements GameProvider {
 				return false;
 			}
 
+			mappingResult = mappingResolver.resolve(config.getAppDir(), version);
+			installProviderMappings(launcher, mappingResult);
+
 			launchArguments = arguments.toArray();
 			validParentClassPath = launcher.getClassPath();
 		} catch (IOException e) {
@@ -201,8 +216,46 @@ public final class SpiralKnightsGameProvider implements GameProvider {
 		// expose obfuscated jar locations for mods to more easily remap code from obfuscated to intermediary
 		ObjectShare share = FabricLoaderImpl.INSTANCE.getObjectShare();
 		share.put("fabric-loader:inputGameJars", Collections.unmodifiableList(new ArrayList<>(gameJars)));
+		exposeMappingDiagnostics(share);
 
 		return true;
+	}
+
+	private void installProviderMappings(FabricLauncher launcher, SpiralKnightsMappingResolver.Result result) {
+		if (result.systemProperty) {
+			Log.info(LogCategory.MAPPINGS, "Using Spiral Knights mappings from %s", SystemProperties.MAPPING_PATH);
+			return;
+		}
+
+		if (result.isAvailable()) {
+			boolean installed = launcher.getMappingConfiguration().setProviderMappingPath(result.mappingPath);
+
+			if (installed) {
+				Log.info(LogCategory.MAPPINGS, "Using Spiral Knights %s mappings for %s from %s", result.source, result.version, result.mappingPath);
+			}
+		} else {
+			Log.warn(LogCategory.MAPPINGS, "No Spiral Knights mappings available for %s: %s. Expected URL: %s. Cache path: %s",
+					result.version, result.unavailableReason, result.url, result.cachePath);
+		}
+	}
+
+	private void exposeMappingDiagnostics(ObjectShare share) {
+		SpiralKnightsMappingResolver.Result result = mappingResult;
+		if (result == null) return;
+
+		share.put("spiralknights:mappingVersion", result.version);
+
+		if (result.mappingPath != null) {
+			share.put("spiralknights:mappingPath", result.mappingPath);
+		}
+
+		if (result.url != null) {
+			share.put("spiralknights:mappingUrl", result.url.toString());
+		}
+
+		if (result.unavailableReason != null) {
+			share.put("spiralknights:mappingUnavailableReason", result.unavailableReason);
+		}
 	}
 
 	private static List<Path> resolveCodePaths(GetdownConfig config, String entrypoint) throws IOException {
@@ -359,8 +412,42 @@ public final class SpiralKnightsGameProvider implements GameProvider {
 		return launchArguments != null ? launchArguments.clone() : new String[0];
 	}
 
+	@Override
+	public String getRuntimeNamespace(String defaultNs) {
+		return MappingConfiguration.OFFICIAL_NAMESPACE;
+	}
+
+	@Override
+	public String getDefaultModDistributionNamespace(String defaultNs) {
+		return MappingConfiguration.INTERMEDIARY_NAMESPACE;
+	}
+
+	@Override
+	public boolean requiresRuntimeModRemap() {
+		return true;
+	}
+
+	@Override
+	public Collection<Path> getRuntimeModRemapClasspath() {
+		Set<Path> ret = new LinkedHashSet<>();
+
+		for (Path gameJar : gameJars) {
+			ret.add(LoaderUtil.normalizePath(gameJar));
+		}
+
+		for (Path path : validParentClassPath) {
+			ret.add(LoaderUtil.normalizePath(path));
+		}
+
+		return Collections.unmodifiableList(new ArrayList<>(ret));
+	}
+
 	List<Path> getGameJars() {
 		return Collections.unmodifiableList(gameJars);
+	}
+
+	SpiralKnightsMappingResolver.Result getMappingResult() {
+		return mappingResult;
 	}
 
 	private static Path findEntrypointJar(List<Path> paths, String entrypoint) throws IOException {

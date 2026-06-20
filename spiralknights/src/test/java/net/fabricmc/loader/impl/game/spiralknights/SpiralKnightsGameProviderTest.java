@@ -43,6 +43,7 @@ import net.fabricmc.api.EnvType;
 import net.fabricmc.loader.impl.FormattedException;
 import net.fabricmc.loader.impl.game.spiralknights.getdown.GetdownConfig;
 import net.fabricmc.loader.impl.launch.FabricLauncher;
+import net.fabricmc.loader.impl.launch.MappingConfiguration;
 import net.fabricmc.loader.impl.util.SystemProperties;
 
 public class SpiralKnightsGameProviderTest {
@@ -62,6 +63,11 @@ public class SpiralKnightsGameProviderTest {
 	private String oldOsName;
 	private String oldSpiralKnightsLogLevel;
 	private String oldJavaLoggingConfigClass;
+	private String oldMappingPath;
+	private String oldSpiralKnightsMappingPath;
+	private String oldSpiralKnightsMappingUrlTemplate;
+	private String oldSpiralKnightsDisableMappingDownload;
+	private String oldSpiralKnightsRefreshMappings;
 
 	@BeforeEach
 	public void setUp() {
@@ -78,6 +84,17 @@ public class SpiralKnightsGameProviderTest {
 		oldOsName = System.getProperty("os.name");
 		oldSpiralKnightsLogLevel = System.getProperty(SystemProperties.SPIRAL_KNIGHTS_LOG_LEVEL);
 		oldJavaLoggingConfigClass = System.getProperty("java.util.logging.config.class");
+		oldMappingPath = System.getProperty(SystemProperties.MAPPING_PATH);
+		oldSpiralKnightsMappingPath = System.getProperty(SystemProperties.SPIRAL_KNIGHTS_MAPPING_PATH);
+		oldSpiralKnightsMappingUrlTemplate = System.getProperty(SystemProperties.SPIRAL_KNIGHTS_MAPPING_URL_TEMPLATE);
+		oldSpiralKnightsDisableMappingDownload = System.getProperty(SystemProperties.SPIRAL_KNIGHTS_DISABLE_MAPPING_DOWNLOAD);
+		oldSpiralKnightsRefreshMappings = System.getProperty(SystemProperties.SPIRAL_KNIGHTS_REFRESH_MAPPINGS);
+
+		System.clearProperty(SystemProperties.MAPPING_PATH);
+		System.clearProperty(SystemProperties.SPIRAL_KNIGHTS_MAPPING_PATH);
+		System.clearProperty(SystemProperties.SPIRAL_KNIGHTS_MAPPING_URL_TEMPLATE);
+		System.clearProperty(SystemProperties.SPIRAL_KNIGHTS_REFRESH_MAPPINGS);
+		System.setProperty(SystemProperties.SPIRAL_KNIGHTS_DISABLE_MAPPING_DOWNLOAD, "true");
 	}
 
 	@AfterEach
@@ -95,6 +112,11 @@ public class SpiralKnightsGameProviderTest {
 		restore("os.name", oldOsName);
 		restore(SystemProperties.SPIRAL_KNIGHTS_LOG_LEVEL, oldSpiralKnightsLogLevel);
 		restore("java.util.logging.config.class", oldJavaLoggingConfigClass);
+		restore(SystemProperties.MAPPING_PATH, oldMappingPath);
+		restore(SystemProperties.SPIRAL_KNIGHTS_MAPPING_PATH, oldSpiralKnightsMappingPath);
+		restore(SystemProperties.SPIRAL_KNIGHTS_MAPPING_URL_TEMPLATE, oldSpiralKnightsMappingUrlTemplate);
+		restore(SystemProperties.SPIRAL_KNIGHTS_DISABLE_MAPPING_DOWNLOAD, oldSpiralKnightsDisableMappingDownload);
+		restore(SystemProperties.SPIRAL_KNIGHTS_REFRESH_MAPPINGS, oldSpiralKnightsRefreshMappings);
 	}
 
 	@Test
@@ -110,8 +132,12 @@ public class SpiralKnightsGameProviderTest {
 		Assertions.assertEquals("20260603121536", provider.getRawGameVersion());
 		Assertions.assertEquals("com.threerings.projectx.client.ProjectXApp", provider.getEntrypoint());
 		Assertions.assertEquals(Arrays.asList(app.configJar, app.gameJar, app.lwjglJar), provider.getGameJars());
+		Assertions.assertEquals(Arrays.asList(app.configJar, app.gameJar, app.lwjglJar), provider.getRuntimeModRemapClasspath());
 		Assertions.assertArrayEquals(new String[] { "--foo", "bar", "extra" }, provider.getLaunchArguments(false));
 		Assertions.assertEquals("Spiral Knights", provider.getBuiltinMods().iterator().next().metadata.getName());
+		Assertions.assertEquals(MappingConfiguration.OFFICIAL_NAMESPACE, provider.getRuntimeNamespace("named"));
+		Assertions.assertEquals(MappingConfiguration.INTERMEDIARY_NAMESPACE, provider.getDefaultModDistributionNamespace("named"));
+		Assertions.assertTrue(provider.requiresRuntimeModRemap());
 	}
 
 	@Test
@@ -127,6 +153,27 @@ public class SpiralKnightsGameProviderTest {
 
 		Assertions.assertTrue(provider.locateGame(createLauncher(), new String[0]));
 		Assertions.assertEquals(Arrays.asList(app.configJar, overrideJar, app.lwjglJar), provider.getGameJars());
+	}
+
+	@Test
+	public void locateGameInstallsLocalMappingOverride() throws IOException {
+		TestApp app = createApp();
+		Path mappingPath = tempDir.resolve("spiralknights.tiny");
+		Files.write(mappingPath, Arrays.asList(
+				"tiny\t2\t0\t" + MappingConfiguration.OFFICIAL_NAMESPACE + "\t" + MappingConfiguration.INTERMEDIARY_NAMESPACE,
+				"c\tcom/threerings/example/GameThing\tcom/example/class_1"));
+		System.setProperty(SystemProperties.SPIRAL_KNIGHTS_APP_DIR, app.appDir.toString());
+		System.setProperty(SystemProperties.SPIRAL_KNIGHTS_MAPPING_PATH, mappingPath.toString());
+
+		MappingConfiguration mappings = new MappingConfiguration();
+		FabricLauncher launcher = createLauncher();
+		when(launcher.getMappingConfiguration()).thenReturn(mappings);
+
+		SpiralKnightsGameProvider provider = new SpiralKnightsGameProvider();
+
+		Assertions.assertTrue(provider.locateGame(launcher, new String[0]));
+		Assertions.assertEquals(mappingPath.toAbsolutePath().normalize(), provider.getMappingResult().mappingPath);
+		Assertions.assertEquals(Arrays.asList(MappingConfiguration.OFFICIAL_NAMESPACE, MappingConfiguration.INTERMEDIARY_NAMESPACE), mappings.getNamespaces());
 	}
 
 	@Test

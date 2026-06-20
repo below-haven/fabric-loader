@@ -37,6 +37,10 @@ public final class SystemProperties {
 	public static final String SKIP_SPIRAL_KNIGHTS_PROVIDER = "fabric.skipSpiralKnightsProvider";
 	public static final String SPIRAL_KNIGHTS_APP_DIR = "fabric.spiralknights.appDir";
 	public static final String SPIRAL_KNIGHTS_LOG_LEVEL = "fabric.spiralknights.logLevel";
+	public static final String SPIRAL_KNIGHTS_MAPPING_PATH = "fabric.spiralknights.mappingPath";
+	public static final String SPIRAL_KNIGHTS_MAPPING_URL_TEMPLATE = "fabric.spiralknights.mappingUrlTemplate";
+	public static final String SPIRAL_KNIGHTS_DISABLE_MAPPING_DOWNLOAD = "fabric.spiralknights.disableMappingDownload";
+	public static final String SPIRAL_KNIGHTS_REFRESH_MAPPINGS = "fabric.spiralknights.refreshMappings";
 	// game jar paths for common/client/server, replaces lookup from class path if present, env specific takes precedence
 	public static final String GAME_JAR_PATH = "fabric.gameJarPath";
 	public static final String GAME_JAR_PATH_CLIENT = "fabric.gameJarPath.client";

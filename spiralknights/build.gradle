@@ -2,6 +2,7 @@ dependencies {
 	api project(":")
 
 	implementation project(":").sourceSets.main.output
+	implementation "net.fabricmc:mapping-io:0.7.1"
 	testImplementation('org.junit.jupiter:junit-jupiter:5.9.2')
 	testRuntimeOnly('org.junit.platform:junit-platform-launcher')
 	testImplementation("org.mockito:mockito-core:5.20.0")

@@ -207,7 +207,7 @@ public final class FabricLoaderImpl extends net.fabricmc.loader.FabricLoader {
 	}
 
 	private void setup() throws ModResolutionException {
-		boolean remapRegularMods = isDevelopmentEnvironment();
+		boolean remapRegularMods = isDevelopmentEnvironment() || provider.requiresRuntimeModRemap();
 		VersionOverrides versionOverrides = new VersionOverrides();
 		DependencyOverrides depOverrides = new DependencyOverrides(configDir);
 
@@ -244,15 +244,7 @@ public final class FabricLoaderImpl extends net.fabricmc.loader.FabricLoader {
 		// runtime mod remapping
 
 		if (remapRegularMods) {
-			if (System.getProperty(SystemProperties.REMAP_CLASSPATH_FILE) == null) {
-				MappingConfiguration config = FabricLauncherBase.getLauncher().getMappingConfiguration();
-
-				if (!config.getRuntimeNamespace().equals(config.getDefaultModDistributionNamespace())) {
-					Log.warn(LogCategory.MOD_REMAP, "Runtime mod remapping disabled due to no fabric.remapClasspathFile being specified. You may need to update loom.");
-				}
-			} else {
-				RuntimeModRemapper.remap(modCandidates, cacheDir.resolve(TMP_DIR_NAME), outputdir);
-			}
+			RuntimeModRemapper.remap(modCandidates, cacheDir.resolve(TMP_DIR_NAME), outputdir, provider.getRuntimeModRemapClasspath());
 		}
 
 		// shuffle mods in-dev to reduce the risk of false order reliance, apply late load requests
