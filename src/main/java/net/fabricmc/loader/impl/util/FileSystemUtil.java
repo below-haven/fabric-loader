@@ -24,6 +24,8 @@ import java.nio.file.FileSystemAlreadyExistsException;
 import java.nio.file.FileSystemNotFoundException;
 import java.nio.file.FileSystems;
 import java.nio.file.Path;
+import java.nio.file.ProviderNotFoundException;
+import java.nio.file.spi.FileSystemProvider;
 import java.util.Collections;
 import java.util.Map;
 import java.util.zip.ZipError;
@@ -54,6 +56,7 @@ public final class FileSystemUtil {
 
 	private static final Map<String, String> jfsArgsCreate = Collections.singletonMap("create", "true");
 	private static final Map<String, String> jfsArgsEmpty = Collections.emptyMap();
+	private static volatile FileSystemProvider bundledZipFileSystemProvider;
 
 	public static FileSystemDelegate getJarFileSystem(Path path, boolean create) throws IOException {
 		return getJarFileSystem(path.toUri(), create);
@@ -73,10 +76,14 @@ public final class FileSystemUtil {
 
 		try {
 			ret = FileSystems.getFileSystem(jarUri);
+		} catch (ProviderNotFoundException e) {
+			return getBundledJarFileSystem(jarUri, create, uri, e);
 		} catch (FileSystemNotFoundException ignore) {
 			try {
 				ret = FileSystems.newFileSystem(jarUri, create ? jfsArgsCreate : jfsArgsEmpty);
 				opened = true;
+			} catch (ProviderNotFoundException e) {
+				return getBundledJarFileSystem(jarUri, create, uri, e);
 			} catch (FileSystemAlreadyExistsException ignore2) {
 				ret = FileSystems.getFileSystem(jarUri);
 			} catch (IOException | ZipError e) {
@@ -85,5 +92,53 @@ public final class FileSystemUtil {
 		}
 
 		return new FileSystemDelegate(ret, opened);
+	}
+
+	private static FileSystemDelegate getBundledJarFileSystem(URI jarUri, boolean create, URI sourceUri,
+			ProviderNotFoundException providerException) throws IOException {
+		FileSystemProvider provider = getBundledZipFileSystemProvider(providerException);
+		boolean opened = false;
+		FileSystem ret = null;
+
+		try {
+			ret = provider.getFileSystem(jarUri);
+		} catch (FileSystemNotFoundException ignore) {
+			try {
+				ret = provider.newFileSystem(jarUri, create ? jfsArgsCreate : jfsArgsEmpty);
+				opened = true;
+			} catch (FileSystemAlreadyExistsException ignore2) {
+				ret = provider.getFileSystem(jarUri);
+			} catch (IOException | ZipError e) {
+				throw new IOException("Error accessing "+sourceUri+": "+e, e);
+			}
+		}
+
+		return new FileSystemDelegate(ret, opened);
+	}
+
+	private static FileSystemProvider getBundledZipFileSystemProvider(ProviderNotFoundException providerException)
+			throws IOException {
+		FileSystemProvider ret = bundledZipFileSystemProvider;
+		if (ret != null) return ret;
+
+		synchronized (FileSystemUtil.class) {
+			ret = bundledZipFileSystemProvider;
+			if (ret != null) return ret;
+
+			try {
+				ret = Class.forName("jdk.nio.zipfs.ZipFileSystemProvider", true, FileSystemUtil.class.getClassLoader())
+						.asSubclass(FileSystemProvider.class)
+						.getConstructor()
+						.newInstance();
+			} catch (ReflectiveOperationException | LinkageError e) {
+				IOException ioException = new IOException("The Java runtime does not provide the jar file system provider, "
+						+ "and Fabric Loader's bundled jdk.zipfs provider could not be loaded.", e);
+				ioException.addSuppressed(providerException);
+				throw ioException;
+			}
+
+			bundledZipFileSystemProvider = ret;
+			return ret;
+		}
 	}
 }

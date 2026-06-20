@@ -168,6 +168,13 @@ import com.github.jengelman.gradle.plugins.shadow.tasks.ShadowJar
 
 apply from: rootProject.file('gradle/java25-compat.gradle')
 
+tasks.named('processResources') {
+	dependsOn javaZipFsCompatModuleJar
+	into('META-INF/fabric-loader') {
+		from javaZipFsCompatModuleJar
+	}
+}
+
 // Renaming in the shadow jar task doesnt seem to work, so do it here
 tasks.register('getSat4jAbout', Copy) {
 	dependsOn project.configurations.include
@@ -187,7 +194,9 @@ tasks.register('getSat4jAbout', Copy) {
 }
 
 tasks.register('fatJar', ShadowJar) {
-	dependsOn getSat4jAbout, javaCompilerCompatClasses, javaCompilerCompatLegal
+	dependsOn getSat4jAbout,
+			javaCompilerCompatClasses, javaCompilerCompatLegal,
+			javaZipFsCompatClasses, javaZipFsCompatLegal
 	from sourceSets.main.output
 	from(project(":minecraft").sourceSets.main.output) {
 		exclude 'META-INF/services/net.fabricmc.loader.impl.game.GameProvider'
@@ -198,6 +207,10 @@ tasks.register('fatJar', ShadowJar) {
 	from javaCompilerCompatClasses
 	into('META-INF/licenses/java.compiler') {
 		from javaCompilerCompatLegal
+	}
+	from javaZipFsCompatClasses
+	into('META-INF/licenses/jdk.zipfs') {
+		from javaZipFsCompatLegal
 	}
 	from getSat4jAbout.destinationDir
 
@@ -241,6 +254,10 @@ tasks.register('patchFatJarMixinGson', JavaExec) {
 
 	inputs.file fatJar.archiveFile
 	outputs.upToDateWhen { false }
+}
+
+tasks.named('fatJar') {
+	finalizedBy patchFatJarMixinGson
 }
 
 File proguardTmpFile = file("build/tmp/fabric-loader-${version}.jar")

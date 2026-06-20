@@ -22,12 +22,16 @@ import static net.fabricmc.loader.impl.game.spiralknights.util.Command.addSystem
 
 import java.io.File;
 import java.io.IOException;
+import java.io.InputStream;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 
+import net.fabricmc.loader.impl.FabricLoaderImpl;
 import net.fabricmc.loader.impl.FormattedException;
 import net.fabricmc.loader.impl.game.spiralknights.getdown.GetdownConfig;
 import net.fabricmc.loader.impl.game.spiralknights.getdown.GetdownUtil;
@@ -38,6 +42,8 @@ import net.fabricmc.loader.impl.util.SystemProperties;
 public final class SpiralKnightsLauncher {
 	static final String BOOTSTRAPPED_PROPERTY = "fabric.spiralknights.bootstrapped";
 	private static final String KNOT_CLIENT = "net.fabricmc.loader.impl.launch.knot.KnotClient";
+	private static final String ZIPFS_MODULE_NAME = "net.fabricmc.loader.zipfs";
+	private static final String ZIPFS_MODULE_RESOURCE = "/META-INF/fabric-loader/" + ZIPFS_MODULE_NAME + ".jar";
 
 	private SpiralKnightsLauncher() {
 	}
@@ -86,6 +92,7 @@ public final class SpiralKnightsLauncher {
 			command.add(GetdownUtil.expand(arg, config.getAppDir(), version));
 		}
 
+		addZipFsModule(command, config);
 		addLogConfigSystemProperties(command);
 		addCurrentSystemProperties(command);
 
@@ -102,6 +109,34 @@ public final class SpiralKnightsLauncher {
 		Collections.addAll(command, args);
 
 		return command;
+	}
+
+	private static void addZipFsModule(List<String> command, GetdownConfig config) {
+		Path modulePath = extractZipFsModule(config.getAppDir());
+		command.add("--module-path");
+		command.add(modulePath.toString());
+		command.add("--add-modules");
+		command.add(ZIPFS_MODULE_NAME);
+	}
+
+	private static Path extractZipFsModule(Path appDir) {
+		Path modulePath = appDir.resolve(FabricLoaderImpl.CACHE_DIR_NAME)
+				.resolve("modules")
+				.resolve(ZIPFS_MODULE_NAME + ".jar");
+
+		try (InputStream input = SpiralKnightsLauncher.class.getResourceAsStream(ZIPFS_MODULE_RESOURCE)) {
+			if (input == null) {
+				throw new FormattedException("Missing Spiral Knights Java compatibility module",
+						"Unable to find bundled %s in Fabric Loader.", ZIPFS_MODULE_RESOURCE);
+			}
+
+			Files.createDirectories(modulePath.getParent());
+			Files.copy(input, modulePath, StandardCopyOption.REPLACE_EXISTING);
+		} catch (IOException e) {
+			throw new FormattedException("Failed to prepare Spiral Knights Java compatibility module", e);
+		}
+
+		return modulePath;
 	}
 
 	private static String getAbsoluteClassPath() {
