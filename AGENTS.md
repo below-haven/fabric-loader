@@ -1,4 +1,4 @@
-# CLAUDE.md
+# AGENTS.md
 
 Guidance for working in this repository. Standalone; `AGENTS.md` is a shorter sibling note and is left as-is.
 
@@ -160,6 +160,13 @@ with `org.gradle.java.installations.paths` offline.
     net.fabricmc.loader.impl.game.spiralknights.SpiralKnightsLauncher
   ```
   *TODO: confirm the real invocation — exact jar name, whether `SpiralKnightsLauncher` or a wrapper script is the entrypoint, and how the mods directory is configured.*
+
+## Completion checks
+
+After all code changes are complete and before handing work back, run Checkstyle for every affected Gradle
+project. Prefer the relevant project's `check` task (for example, `./gradlew :spiralknights:check`) so tests and
+other verification run with it. If Checkstyle fails, fix every reported violation and rerun the task until it
+passes; do not finish or hand off changes with Checkstyle failures.
 
 ## Key files map
 

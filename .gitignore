@@ -10,7 +10,11 @@
 !/.gitattributes
 !/.gitignore
 !/.editorconfig
+!/.envrc
+!/.tool-versions
+!/AGENTS.md
 !/build.gradle
+!/build.md
 !/checkstyle.xml
 !/gradle.properties
 !/gradlew
