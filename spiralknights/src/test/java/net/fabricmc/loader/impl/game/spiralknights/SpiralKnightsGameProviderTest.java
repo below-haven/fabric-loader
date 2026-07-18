@@ -40,6 +40,10 @@ import org.objectweb.asm.MethodVisitor;
 import org.objectweb.asm.Opcodes;
 
 import net.fabricmc.api.EnvType;
+import net.fabricmc.loader.api.Version;
+import net.fabricmc.loader.api.VersionParsingException;
+import net.fabricmc.loader.api.metadata.ModDependency;
+import net.fabricmc.loader.api.metadata.ModMetadata;
 import net.fabricmc.loader.impl.FormattedException;
 import net.fabricmc.loader.impl.game.spiralknights.getdown.GetdownConfig;
 import net.fabricmc.loader.impl.launch.FabricLauncher;
@@ -120,7 +124,7 @@ public class SpiralKnightsGameProviderTest {
 	}
 
 	@Test
-	public void locatesGameAndRecordsLaunchArguments() throws IOException {
+	public void locatesGameAndRecordsLaunchArguments() throws IOException, VersionParsingException {
 		TestApp app = createApp();
 		System.setProperty(SystemProperties.SPIRAL_KNIGHTS_APP_DIR, app.appDir.toString());
 
@@ -134,7 +138,13 @@ public class SpiralKnightsGameProviderTest {
 		Assertions.assertEquals(Arrays.asList(app.configJar, app.gameJar, app.lwjglJar), provider.getGameJars());
 		Assertions.assertEquals(Arrays.asList(app.configJar, app.gameJar, app.lwjglJar), provider.getRuntimeModRemapClasspath());
 		Assertions.assertArrayEquals(new String[] { "--foo", "bar", "extra" }, provider.getLaunchArguments(false));
-		Assertions.assertEquals("Spiral Knights", provider.getBuiltinMods().iterator().next().metadata.getName());
+		ModMetadata gameMetadata = provider.getBuiltinMods().iterator().next().metadata;
+		Assertions.assertEquals("Spiral Knights", gameMetadata.getName());
+		ModDependency javaDependency = gameMetadata.getDependencies().iterator().next();
+		Assertions.assertEquals(ModDependency.Kind.DEPENDS, javaDependency.getKind());
+		Assertions.assertEquals("java", javaDependency.getModId());
+		Assertions.assertTrue(javaDependency.matches(Version.parse("8")));
+		Assertions.assertFalse(javaDependency.matches(Version.parse("7")));
 		Assertions.assertEquals(MappingConfiguration.OFFICIAL_NAMESPACE, provider.getRuntimeNamespace("named"));
 		Assertions.assertEquals(MappingConfiguration.INTERMEDIARY_NAMESPACE, provider.getDefaultModDistributionNamespace("named"));
 		Assertions.assertTrue(provider.requiresRuntimeModRemap());
@@ -325,9 +335,19 @@ public class SpiralKnightsGameProviderTest {
 		main.visitCode();
 		main.visitLdcInsn("projectx.log");
 		main.visitMethodInsn(Opcodes.INVOKESTATIC, "com/threerings/util/ToolUtil", "configureLog", "(Ljava/lang/String;)V", false);
+		main.visitTypeInsn(Opcodes.NEW, "com/threerings/projectx/client/ProjectXApp");
+		main.visitInsn(Opcodes.DUP);
+		main.visitMethodInsn(Opcodes.INVOKESPECIAL, "com/threerings/projectx/client/ProjectXApp", "<init>", "()V", false);
+		main.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "com/threerings/projectx/client/ProjectXApp", "startup", "()V", false);
 		main.visitInsn(Opcodes.RETURN);
-		main.visitMaxs(1, 1);
+		main.visitMaxs(2, 1);
 		main.visitEnd();
+
+		MethodVisitor startup = writer.visitMethod(Opcodes.ACC_PUBLIC, "startup", "()V", null, null);
+		startup.visitCode();
+		startup.visitInsn(Opcodes.RETURN);
+		startup.visitMaxs(0, 1);
+		startup.visitEnd();
 
 		writer.visitEnd();
 		return writer.toByteArray();

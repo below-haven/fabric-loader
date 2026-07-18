@@ -29,7 +29,6 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import net.fabricmc.loader.impl.FormattedException;
-import net.fabricmc.loader.impl.FabricLoaderImpl;
 import net.fabricmc.loader.impl.launch.MappingConfiguration;
 import net.fabricmc.loader.impl.util.SystemProperties;
 
@@ -141,11 +140,7 @@ public class SpiralKnightsMappingResolverTest {
 	}
 
 	private Path cachePath() {
-		return tempDir.resolve(FabricLoaderImpl.CACHE_DIR_NAME)
-				.resolve("mappings")
-				.resolve("spiralknights")
-				.resolve(MappingConfiguration.INTERMEDIARY_NAMESPACE)
-				.resolve(VERSION + ".tiny");
+		return SpiralKnightsCache.getMapping(tempDir, VERSION);
 	}
 
 	private int countTempFiles() throws IOException {

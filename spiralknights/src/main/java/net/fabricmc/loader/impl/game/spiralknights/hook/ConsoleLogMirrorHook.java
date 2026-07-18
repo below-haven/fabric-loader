@@ -29,20 +29,21 @@ import java.util.logging.LogRecord;
 import java.util.logging.Logger;
 import java.util.logging.SimpleFormatter;
 
-public final class ConsoleLogMirrorHook {
-	public static final String INTERNAL_NAME = ConsoleLogMirrorHook.class.getName().replace('.', '/');
+import net.fabricmc.loader.impl.game.spiralknights.patch.api.Hook;
 
+public final class ConsoleLogMirrorHook {
 	private ConsoleLogMirrorHook() {
 	}
 
-	private static PrintStream createTerminalStream(FileDescriptor descriptor) {
-		return new PrintStream(new FileOutputStream(descriptor), true);
-	}
-
+	@Hook
 	public static synchronized void installConsoleLogMirror() {
 		installConsoleLogMirror(
 				createTerminalStream(FileDescriptor.out),
 				createTerminalStream(FileDescriptor.err));
+	}
+
+	private static PrintStream createTerminalStream(FileDescriptor descriptor) {
+		return new PrintStream(new FileOutputStream(descriptor), true);
 	}
 
 	private static boolean isInstalled() {

@@ -50,7 +50,7 @@ Mappings are resolved per game version by
 
 1. `fabric.mappingPath` system property → used as-is.
 2. `fabric.spiralknights.mappingPath` → local override file.
-3. Cache hit at `<appDir>/.fabric/mappings/spiralknights/intermediary/<version>.tiny` (unless a refresh is requested).
+3. Cache hit at `<appDir>/.fabric/mappings/<version>.tiny` (unless a refresh is requested).
 4. Download from a URL template — default `https://raw.githubusercontent.com/below-haven/mapping-chain/refs/heads/main/intermediary/%s.tiny` (the `below-haven/mapping-chain` repo), then write into the cache.
 
 Resolved mappings are validated to contain **both** `official` and `intermediary` namespaces. Because the
@@ -104,8 +104,10 @@ in `spiralknights/.../getdown/`: `GetdownUtil`, `QualifiedValue`, `CurrentOs`.
 ## SK-specific runtime patch (console logging)
 
 The game redirects stdout to a log file via `ToolUtil.configureLog("projectx.log")`.
-[`ConsoleLogMirrorPatch`](spiralknights/src/main/java/net/fabricmc/loader/impl/game/spiralknights/patch/ConsoleLogMirrorPatch.java)
-injects a call (at the entrypoint, during `initialize`) to install
+[`EntrypointPatch`](spiralknights/src/main/java/net/fabricmc/loader/impl/game/spiralknights/patch/entrypoint/EntrypointPatch.java)
+coordinates the startup patch steps. Its
+[`ConsoleLogMirrorPatch`](spiralknights/src/main/java/net/fabricmc/loader/impl/game/spiralknights/patch/entrypoint/ConsoleLogMirrorPatch.java)
+step injects a call (at the entrypoint, during `initialize`) to install
 [`ConsoleLogMirrorHook`](spiralknights/src/main/java/net/fabricmc/loader/impl/game/spiralknights/hook/ConsoleLogMirrorHook.java),
 which mirrors that output back to the console. This is the canonical example of how the fork patches game
 bytecode at the entrypoint — add similar patches the same way.
@@ -178,7 +180,9 @@ passes; do not finish or hand off changes with Checkstyle failures.
 | `SpiralKnightsLauncher.java` | Two-phase bootstrap entry point. |
 | `SpiralKnightsMappingResolver.java` | Per-version mapping resolution (override → cache → download). |
 | `getdown/GetdownConfig.java` (+ `GetdownUtil`, `QualifiedValue`, `CurrentOs`) | Getdown `getdown.txt` parsing. |
-| `patch/ConsoleLogMirrorPatch.java` + `hook/ConsoleLogMirrorHook.java` | Example entrypoint bytecode patch (console log mirroring). |
+| `patch/api/Hook.java` + `HookPatch.java` + `HookPatchContext.java` | Target-agnostic contracts and ASM context reusable by patches on any game class or method. |
+| `patch/entrypoint/EntrypointPatch.java` (+ concrete patch steps) | Coordinates patches targeting the current game entrypoint and emits the transformed class. |
+| `hook/ConsoleLogMirrorHook.java` + `hook/StartClientHook.java` | Runtime code injected into the game; contains no bytecode-patching structure. |
 | `resources/META-INF/services/net.fabricmc.loader.impl.game.GameProvider` | Registers the SK provider. |
 
 **Shared loader** (`src/main/java/net/fabricmc/loader/impl/`):

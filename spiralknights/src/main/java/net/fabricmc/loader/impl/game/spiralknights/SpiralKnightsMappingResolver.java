@@ -28,7 +28,6 @@ import java.nio.file.StandardCopyOption;
 import java.util.List;
 import java.util.Locale;
 
-import net.fabricmc.loader.impl.FabricLoaderImpl;
 import net.fabricmc.loader.impl.FormattedException;
 import net.fabricmc.loader.impl.launch.MappingConfiguration;
 import net.fabricmc.loader.impl.util.SystemProperties;
@@ -65,7 +64,7 @@ final class SpiralKnightsMappingResolver {
 			return Result.available(path, null, null, version, "local override");
 		}
 
-		Path cachePath = getCachePath(appDir, version);
+		Path cachePath = SpiralKnightsCache.getMapping(appDir, version);
 		URL url = getMappingUrl(version);
 		boolean refresh = SystemProperties.isSet(SystemProperties.SPIRAL_KNIGHTS_REFRESH_MAPPINGS);
 
@@ -146,14 +145,6 @@ final class SpiralKnightsMappingResolver {
 		if (tree.getClasses().isEmpty()) {
 			throw new IOException("mapping file does not contain any class mappings");
 		}
-	}
-
-	private static Path getCachePath(Path appDir, String version) {
-		return appDir.resolve(FabricLoaderImpl.CACHE_DIR_NAME)
-				.resolve("mappings")
-				.resolve("spiralknights")
-				.resolve(MappingConfiguration.INTERMEDIARY_NAMESPACE)
-				.resolve(version + ".tiny");
 	}
 
 	private static URL getMappingUrl(String version) {

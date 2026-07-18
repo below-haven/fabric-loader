@@ -16,6 +16,7 @@
 
 package net.fabricmc.loader.impl.game.spiralknights;
 
+import java.io.DataInputStream;
 import java.io.IOException;
 import java.lang.invoke.MethodHandle;
 import java.lang.invoke.MethodHandles;
@@ -32,6 +33,7 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.zip.ZipEntry;
@@ -39,17 +41,19 @@ import java.util.zip.ZipFile;
 
 import net.fabricmc.api.EnvType;
 import net.fabricmc.loader.api.ObjectShare;
-import net.fabricmc.loader.api.metadata.ModMetadata;
+import net.fabricmc.loader.api.VersionParsingException;
+import net.fabricmc.loader.api.metadata.ModDependency;
 import net.fabricmc.loader.impl.FabricLoaderImpl;
 import net.fabricmc.loader.impl.FormattedException;
 import net.fabricmc.loader.impl.game.GameProvider;
 import net.fabricmc.loader.impl.game.GameProviderHelper;
 import net.fabricmc.loader.impl.game.patch.GameTransformer;
 import net.fabricmc.loader.impl.game.spiralknights.getdown.GetdownConfig;
-import net.fabricmc.loader.impl.game.spiralknights.patch.ConsoleLogMirrorPatch;
+import net.fabricmc.loader.impl.game.spiralknights.patch.entrypoint.EntrypointPatch;
 import net.fabricmc.loader.impl.launch.FabricLauncher;
 import net.fabricmc.loader.impl.launch.MappingConfiguration;
 import net.fabricmc.loader.impl.metadata.BuiltinModMetadata;
+import net.fabricmc.loader.impl.metadata.ModDependencyImpl;
 import net.fabricmc.loader.impl.util.Arguments;
 import net.fabricmc.loader.impl.util.ExceptionUtil;
 import net.fabricmc.loader.impl.util.LoaderUtil;
@@ -60,13 +64,12 @@ import net.fabricmc.mappingio.tree.MappingTree;
 
 public final class SpiralKnightsGameProvider implements GameProvider {
 	private static final Set<BuiltinTransform> TRANSFORMS = EnumSet.of(BuiltinTransform.STRIP_ENVIRONMENT, BuiltinTransform.CLASS_TWEAKS);
-	private static final String INTERMEDIARY_GAME_DIR_NAME = "intermediaryGameJars";
-
-	private final GameTransformer transformer = new GameTransformer(new ConsoleLogMirrorPatch());
+	private final GameTransformer transformer = new GameTransformer(new EntrypointPatch());
 	private final SpiralKnightsMappingResolver mappingResolver;
 	private GetdownConfig config;
 	private String version;
 	private String entrypoint;
+	private Integer entrypointClassVersion;
 	private Arguments arguments;
 	private String[] launchArguments;
 	private final List<Path> gameJars = new ArrayList<>();
@@ -130,11 +133,21 @@ public final class SpiralKnightsGameProvider implements GameProvider {
 	 */
 	@Override
 	public Collection<BuiltinMod> getBuiltinMods() {
-		ModMetadata metadata = new BuiltinModMetadata.Builder(getGameId(), getNormalizedGameVersion())
-				.setName(getGameName())
-				.build();
+		BuiltinModMetadata.Builder metadata = new BuiltinModMetadata.Builder(getGameId(), getNormalizedGameVersion())
+				.setName(getGameName());
 
-		return Collections.singletonList(new BuiltinMod(gameJars, metadata));
+		if (entrypointClassVersion != null) {
+			int javaVersion = entrypointClassVersion - 44;
+
+			try {
+				metadata.addDependency(new ModDependencyImpl(ModDependency.Kind.DEPENDS, "java",
+						Collections.singletonList(String.format(Locale.ENGLISH, ">=%d", javaVersion))));
+			} catch (VersionParsingException e) {
+				throw new RuntimeException(e);
+			}
+		}
+
+		return Collections.singletonList(new BuiltinMod(gameJars, metadata.build()));
 	}
 
 	/**
@@ -208,9 +221,13 @@ public final class SpiralKnightsGameProvider implements GameProvider {
 			gameJars.clear();
 			gameJars.addAll(resolveCodePaths(config, entrypoint));
 
-			if (findEntrypointJar(gameJars, entrypoint) == null) {
+			Path entrypointJar = findEntrypointJar(gameJars, entrypoint);
+
+			if (entrypointJar == null) {
 				return false;
 			}
+
+			entrypointClassVersion = readClassVersion(entrypointJar, entrypoint);
 
 			mappingResult = mappingResolver.resolve(config.getAppDir(), version);
 			installProviderMappings(launcher, mappingResult);
@@ -525,10 +542,7 @@ public final class SpiralKnightsGameProvider implements GameProvider {
 			}
 		}
 
-		Path outputDir = config.getAppDir()
-				.resolve(FabricLoaderImpl.CACHE_DIR_NAME)
-				.resolve(INTERMEDIARY_GAME_DIR_NAME)
-				.resolve(version);
+		Path outputDir = SpiralKnightsCache.getGameJars(config.getAppDir(), version);
 
 		List<Path> ret = new ArrayList<>();
 
@@ -580,5 +594,22 @@ public final class SpiralKnightsGameProvider implements GameProvider {
 		}
 
 		return null;
+	}
+
+	private static Integer readClassVersion(Path jar, String className) throws IOException {
+		String entry = LoaderUtil.getClassFileName(className);
+
+		try (ZipFile zipFile = new ZipFile(jar.toFile())) {
+			ZipEntry zipEntry = zipFile.getEntry(entry);
+
+			if (zipEntry == null) return null;
+
+			try (DataInputStream input = new DataInputStream(zipFile.getInputStream(zipEntry))) {
+				if (input.readInt() != 0xCAFEBABE) return null;
+
+				input.readUnsignedShort();
+				return input.readUnsignedShort();
+			}
+		}
 	}
 }

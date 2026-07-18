@@ -39,15 +39,19 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.objectweb.asm.Opcodes;
+import org.objectweb.asm.Type;
 import org.objectweb.asm.tree.AbstractInsnNode;
 import org.objectweb.asm.tree.ClassNode;
 import org.objectweb.asm.tree.InsnList;
+import org.objectweb.asm.tree.InsnNode;
 import org.objectweb.asm.tree.LdcInsnNode;
 import org.objectweb.asm.tree.MethodInsnNode;
 import org.objectweb.asm.tree.MethodNode;
+import org.objectweb.asm.tree.TypeInsnNode;
 
 import net.fabricmc.loader.impl.game.spiralknights.hook.ConsoleLogMirrorHook;
-import net.fabricmc.loader.impl.game.spiralknights.patch.ConsoleLogMirrorPatch;
+import net.fabricmc.loader.impl.game.spiralknights.hook.StartClientHook;
+import net.fabricmc.loader.impl.game.spiralknights.patch.entrypoint.EntrypointPatch;
 import net.fabricmc.loader.impl.launch.FabricLauncher;
 import net.fabricmc.loader.impl.util.SystemProperties;
 
@@ -153,13 +157,13 @@ public class SpiralKnightsLoggingTest {
 	}
 
 	@Test
-	public void patchInjectsConsoleLogMirrorAfterLoggingInit() {
+	public void patchInjectsLoggingHookAndInitializesModsWithApplicationInstance() {
 		ClassNode entrypointClass = createEntrypointClass();
 		FabricLauncher launcher = mock();
 		when(launcher.getEntrypoint()).thenReturn(ENTRYPOINT);
 		final ClassNode[] emittedClass = new ClassNode[1];
 
-		new ConsoleLogMirrorPatch().process(launcher,
+		new EntrypointPatch().process(launcher,
 				name -> ENTRYPOINT.equals(name) ? entrypointClass : null,
 				node -> emittedClass[0] = node);
 
@@ -167,7 +171,10 @@ public class SpiralKnightsLoggingTest {
 
 		MethodNode mainMethod = findMain(entrypointClass);
 		MethodInsnNode loggingInit = null;
-		MethodInsnNode hook = null;
+		MethodInsnNode consoleMirrorHook = null;
+		MethodInsnNode applicationConstructor = null;
+		MethodInsnNode modInitializationHook = null;
+		MethodInsnNode applicationStartup = null;
 
 		for (AbstractInsnNode insn : mainMethod.instructions) {
 			if (insn instanceof MethodInsnNode) {
@@ -175,16 +182,36 @@ public class SpiralKnightsLoggingTest {
 
 				if (methodInsn.owner.equals("com/threerings/util/ToolUtil")) {
 					loggingInit = methodInsn;
-				} else if (methodInsn.owner.equals(ConsoleLogMirrorHook.INTERNAL_NAME)
+				} else if (methodInsn.owner.equals(Type.getInternalName(ConsoleLogMirrorHook.class))
 						&& methodInsn.name.equals("installConsoleLogMirror")) {
-					hook = methodInsn;
+					consoleMirrorHook = methodInsn;
+				} else if (methodInsn.owner.equals(ENTRYPOINT.replace('.', '/'))
+						&& methodInsn.name.equals("<init>")) {
+					applicationConstructor = methodInsn;
+				} else if (methodInsn.owner.equals(Type.getInternalName(StartClientHook.class))) {
+					modInitializationHook = methodInsn;
+				} else if (methodInsn.owner.equals(ENTRYPOINT.replace('.', '/'))
+						&& methodInsn.name.equals("startup")) {
+					applicationStartup = methodInsn;
 				}
 			}
 		}
 
 		Assertions.assertNotNull(loggingInit);
-		Assertions.assertNotNull(hook);
-		Assertions.assertEquals(mainMethod.instructions.indexOf(loggingInit) + 1, mainMethod.instructions.indexOf(hook));
+		Assertions.assertNotNull(consoleMirrorHook);
+		Assertions.assertNotNull(applicationConstructor);
+		Assertions.assertNotNull(modInitializationHook);
+		Assertions.assertNotNull(applicationStartup);
+		Assertions.assertEquals(mainMethod.instructions.indexOf(loggingInit) + 1,
+				mainMethod.instructions.indexOf(consoleMirrorHook));
+		AbstractInsnNode duplicate = applicationConstructor.getNext();
+		Assertions.assertInstanceOf(InsnNode.class, duplicate);
+		Assertions.assertEquals(Opcodes.DUP, duplicate.getOpcode());
+		Assertions.assertEquals(mainMethod.instructions.indexOf(duplicate) + 1,
+				mainMethod.instructions.indexOf(modInitializationHook));
+		Assertions.assertEquals("(Ljava/lang/Object;)V", modInitializationHook.desc);
+		Assertions.assertEquals(mainMethod.instructions.indexOf(modInitializationHook) + 1,
+				mainMethod.instructions.indexOf(applicationStartup));
 	}
 
 	private static boolean hasHandlerWithLevel(Logger logger, Level level) {
@@ -231,7 +258,11 @@ public class SpiralKnightsLoggingTest {
 		InsnList instructions = main.instructions;
 		instructions.add(new LdcInsnNode("projectx.log"));
 		instructions.add(new MethodInsnNode(Opcodes.INVOKESTATIC, "com/threerings/util/ToolUtil", "configureLog", "(Ljava/lang/String;)V", false));
-		instructions.add(new org.objectweb.asm.tree.InsnNode(Opcodes.RETURN));
+		instructions.add(new TypeInsnNode(Opcodes.NEW, classNode.name));
+		instructions.add(new InsnNode(Opcodes.DUP));
+		instructions.add(new MethodInsnNode(Opcodes.INVOKESPECIAL, classNode.name, "<init>", "()V", false));
+		instructions.add(new MethodInsnNode(Opcodes.INVOKEVIRTUAL, classNode.name, "startup", "()V", false));
+		instructions.add(new InsnNode(Opcodes.RETURN));
 		classNode.methods.add(main);
 
 		return classNode;
